@@ -60,13 +60,17 @@ public class AgentOrchestrator {
         String context = "真实业务快照(不要编造数据): metrics=" + metrics + ", risks=" + risks + ", strategy=" + strategy;
 
         CompletableFuture<String> data = asyncCall(dataAgent,
-                context + "\n用户问题: " + request + "\n请输出3条基于数据的发现和1条建议。");
+                context + "\n用户问题: " + request + "\n请输出3条基于数据的发现和1条建议。",
+                localDataFallback(metrics));
         CompletableFuture<String> risk = asyncCall(riskAgent,
-                context + "\n用户问题: " + request + "\n请输出风险等级、证据和处置建议。");
+                context + "\n用户问题: " + request + "\n请输出风险等级、证据和处置建议。",
+                localRiskFallback(risks));
         CompletableFuture<String> content = asyncCall(contentAgent,
-                context + "\n用户问题: " + request + "\n请给出一条可直接使用的活动标题和短描述。");
+                context + "\n用户问题: " + request + "\n请给出一条可直接使用的活动标题和短描述。",
+                localContentFallback(request));
         CompletableFuture<String> strategyAgentResult = asyncCall(strategyAgent,
-                context + "\n用户问题: " + request + "\n请解释推荐库存、时长和限购参数的原因。");
+                context + "\n用户问题: " + request + "\n请解释推荐库存、时长和限购参数的原因。",
+                localStrategyFallback(strategy));
         CompletableFuture.allOf(data, risk, content, strategyAgentResult).join();
 
         String intent = detectIntent(request);
@@ -86,7 +90,32 @@ public class AgentOrchestrator {
                 : List.of(Map.of("id", "REFRESH_INSIGHTS", "label", "刷新实时数据", "requiresConfirmation", false)));
         result.put("requiresConfirmation", intent.equals("CAMPAIGN"));
         result.put("elapsedMs", System.currentTimeMillis() - start);
+        result.put("degraded", data.join().startsWith("[本地降级]") || risk.join().startsWith("[本地降级]")
+                || content.join().startsWith("[本地降级]") || strategyAgentResult.join().startsWith("[本地降级]"));
         return result;
+    }
+
+    private String localDataFallback(Map<String, Object> metrics) {
+        return "[本地降级] 基于实时数据库快照：近7天订单 " + metrics.getOrDefault("orders7d", 0)
+                + "，支付转化率 " + metrics.getOrDefault("paymentRate", 0) + "%，库存售罄率 "
+                + metrics.getOrDefault("sellThroughRate", 0) + "%。建议先观察支付链路，再扩大活动库存。";
+    }
+
+    private String localRiskFallback(Map<String, Object> risks) {
+        return "[本地降级] 当前风险等级：" + risks.getOrDefault("riskLevel", "UNKNOWN")
+                + "；黑名单设备：" + risks.getOrDefault("blacklistedDevices", 0)
+                + "。已启用设备指纹、滑动窗口、一人一单和 Sentinel 限流。";
+    }
+
+    private String localContentFallback(String query) {
+        return "[本地降级] 优惠券名称: " + (query.contains("新用户") ? "新客首单惊喜券" : "限时秒杀惊喜券")
+                + "\n优惠券描述: 限量发放，先到先得，活动期间每位用户限领指定数量。";
+    }
+
+    private String localStrategyFallback(Map<String, Object> strategy) {
+        return "[本地降级] 推荐库存 " + strategy.getOrDefault("stock", 800) + "，有效时长 "
+                + strategy.getOrDefault("durationHours", 24) + " 小时，每人限领 "
+                + strategy.getOrDefault("perUserMax", 1) + " 张。";
     }
 
     private String detectIntent(String query) {
@@ -150,6 +179,17 @@ public class AgentOrchestrator {
             } catch (Exception e) {
                 log.error("Agent失败: {}", e.getMessage());
                 return "Agent暂不可用: " + e.getMessage();
+            }
+        }, executor);
+    }
+
+    private CompletableFuture<String> asyncCall(ChatClient agent, String prompt, String fallback) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return agent.prompt().user(prompt).call().content();
+            } catch (Exception e) {
+                log.warn("Agent 调用失败，切换本地降级: {}", e.getClass().getSimpleName());
+                return fallback;
             }
         }, executor);
     }
