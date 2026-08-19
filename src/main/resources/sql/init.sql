@@ -109,3 +109,39 @@ CREATE TABLE IF NOT EXISTS ai_audit_log (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_ai_audit_merchant_time (merchant_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- AI 可执行任务：保存已确认前不可变的 Proposal，避免执行阶段重新生成参数
+CREATE TABLE IF NOT EXISTS ai_task (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    task_no VARCHAR(64) NOT NULL UNIQUE,
+    merchant_id BIGINT NOT NULL,
+    query VARCHAR(512) NOT NULL,
+    action_type VARCHAR(32) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    target_coupon_id BIGINT,
+    proposal_json TEXT NOT NULL,
+    result_json TEXT,
+    requires_confirmation BOOLEAN NOT NULL DEFAULT TRUE,
+    confirmed_at DATETIME,
+    completed_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_ai_task_merchant_time (merchant_id, created_at),
+    INDEX idx_ai_task_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- AI 工具调用审计：记录每个动作的输入、状态、结果和错误
+CREATE TABLE IF NOT EXISTS ai_action (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    task_id BIGINT NOT NULL,
+    merchant_id BIGINT NOT NULL,
+    action_type VARCHAR(32) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    input_json TEXT NOT NULL,
+    result_json TEXT,
+    error_message VARCHAR(512),
+    executed_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_ai_action_task_time (task_id, created_at),
+    INDEX idx_ai_action_merchant (merchant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

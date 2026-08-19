@@ -5,6 +5,7 @@ import com.seckill.repository.CouponRepository;
 import com.seckill.repository.MerchantRepository;
 import com.seckill.repository.AiAuditLogRepository;
 import com.seckill.model.AiAuditLog;
+import com.seckill.service.AiExecutionService;
 import com.seckill.exception.ForbiddenException;
 import com.seckill.util.UserContext;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,36 @@ public class AiAgentController {
     private final MerchantRepository merchantRepository;
     private final RedisTemplate<String, Object> redisTemplate;
     private final AiAuditLogRepository aiAuditLogRepository;
+    private final AiExecutionService aiExecutionService;
+
+    /**
+     * 将自然语言运营目标固化成不可变 Proposal。此接口只规划，不执行写操作。
+     */
+    @PostMapping("/tasks")
+    public Map<String, Object> createTask(@RequestBody Map<String, String> request) {
+        requireMerchant();
+        return aiExecutionService.createTask(currentMerchantId(), request.get("query"));
+    }
+
+    /** 查询当前商户最近 20 个 AI 执行任务及动作时间线。 */
+    @GetMapping("/tasks")
+    public List<Map<String, Object>> tasks() {
+        requireMerchant();
+        return aiExecutionService.listTasks(currentMerchantId());
+    }
+
+    /** 确认并执行已经保存的 Proposal，不再重新调用模型生成参数。 */
+    @PostMapping("/tasks/{taskNo}/confirm")
+    public Map<String, Object> confirmTask(@PathVariable String taskNo) {
+        requireMerchant();
+        return aiExecutionService.confirm(currentMerchantId(), taskNo);
+    }
+
+    @PostMapping("/tasks/{taskNo}/cancel")
+    public Map<String, Object> cancelTask(@PathVariable String taskNo) {
+        requireMerchant();
+        return aiExecutionService.cancel(currentMerchantId(), taskNo);
+    }
 
     /**
      * AI 策划活动
@@ -168,8 +199,8 @@ public class AiAgentController {
             fields.put("version", 0);
             fields.put("per_user_max", 1);
             fields.put("status", 1);
-            fields.put("start_time", String.valueOf(coupon.getStartTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()));
-            fields.put("end_time", String.valueOf(coupon.getEndTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()));
+            fields.put("start_time", coupon.getStartTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
+            fields.put("end_time", coupon.getEndTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
             redisTemplate.opsForHash().putAll(key, fields);
 
             return Map.of("success", true, "couponId", coupon.getId(), "couponName", coupon.getCouponName(), "plan", plan);
@@ -216,8 +247,8 @@ public class AiAgentController {
         fields.put("version", 0);
         fields.put("per_user_max", coupon.getPerUserMax());
         fields.put("status", 1);
-        fields.put("start_time", String.valueOf(coupon.getStartTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()));
-        fields.put("end_time", String.valueOf(coupon.getEndTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()));
+        fields.put("start_time", coupon.getStartTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
+        fields.put("end_time", coupon.getEndTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
         redisTemplate.opsForHash().putAll(key, fields);
     }
 
@@ -236,7 +267,8 @@ public class AiAgentController {
         return Map.of(
             "status", "ok",
             "model", "DeepSeek Chat",
-            "agents", new String[]{"data", "risk", "content", "strategy"}
+            "agents", new String[]{"data", "risk", "content", "strategy"},
+            "executionTools", new String[]{"CREATE_CAMPAIGN", "INCREASE_STOCK", "PAUSE_CAMPAIGN", "RESUME_CAMPAIGN"}
         );
     }
 }

@@ -1,7 +1,7 @@
 # 项目交接文档
 
 更新时间：2026-08-19
-项目路径：`/Users/jackt/seckill-coupon`
+项目路径：以当前机器仓库路径为准（本次验证为 `D:\code\XG2JD`）
 GitHub：`https://github.com/jack4code1/XG2JD`
 
 ## 1. 项目定位
@@ -13,7 +13,7 @@ GitHub：`https://github.com/jack4code1/XG2JD`
 - Sentinel 限流、防刷和智能用户策略
 - 商户与普通用户角色隔离
 - 商品支付、优惠券抵扣和订单状态机
-- 基于真实 MySQL / Redis 数据的 Multi-Agent 运营分析
+- 基于真实 MySQL / Redis 数据的 Multi-Agent 运营分析与受控执行
 
 ## 2. 技术栈
 
@@ -146,7 +146,7 @@ CREATED -> PAYING -> PAID -> USED
 
 当前支付为模拟支付状态机，不接入真实微信或支付宝网关。前端商品订单支持查看详情，包括消费时间、支付完成时间、原价、抵扣和实付金额。
 
-## 8. AI Copilot
+## 8. AI Copilot 与执行 Agent
 
 流程：
 
@@ -155,8 +155,10 @@ CREATED -> PAYING -> PAID -> USED
   -> MySQL / Redis 真实数据快照
   -> 意图识别
   -> 数据、风控、内容、策略 4 Agent 并行
-  -> 结构化结果
-  -> 商户确认后执行写操作
+  -> 持久化不可变 Proposal
+  -> 商户确认
+  -> 白名单业务工具执行
+  -> MySQL / Redis 同步 + 动作审计
 ```
 
 主要接口：
@@ -167,10 +169,18 @@ CREATED -> PAYING -> PAID -> USED
 | `POST /api/ai/copilot/execute` | 商户确认后执行创建优惠券 |
 | `POST /api/ai/eval` | 运行 4 条固定评测问题 |
 | `GET /api/ai/audits` | 查询当前商户最近 20 次调用审计 |
+| `POST /api/ai/tasks` | 将自然语言目标转换为待确认任务 |
+| `GET /api/ai/tasks` | 查询当前商户最近 20 个任务和动作时间线 |
+| `POST /api/ai/tasks/{taskNo}/confirm` | 幂等确认并执行保存的 Proposal |
+| `POST /api/ai/tasks/{taskNo}/cancel` | 取消待确认任务 |
 
 AI 审计表 `ai_audit_log` 只保存商户、问题、意图、耗时和降级状态，不保存完整模型原文。
 
 Copilot 降级时会使用本地 MySQL / Redis 快照规则生成结果，并返回 `degraded=true`。
+
+执行 Agent 当前开放 4 个工具：`CREATE_CAMPAIGN`、`INCREASE_STOCK`、`PAUSE_CAMPAIGN`、`RESUME_CAMPAIGN`。每个任务保存商户归属、原始指令、Proposal、执行结果和时间戳；每个动作保存输入、状态、结果或错误。暂停状态为优惠券 `status=3`，秒杀 Lua 会在扣库存之前返回 `-4` 拦截请求。
+
+安全边界：模型不直接写数据库；高风险写操作均需 Human-in-the-loop 确认；确认时执行已保存参数，不再次调用模型改变方案；已完成任务重复确认不会重复写入。目前是单实例 `synchronized` 幂等保护，扩展为多实例时应增加数据库条件更新或分布式锁。
 
 ## 9. 观测指标
 
@@ -208,7 +218,7 @@ curl -X POST http://localhost:8080/api/ai/eval \
   -H "Authorization: Bearer <merchant-token>"
 ```
 
-完整 `mvn test` 当前受 Maven 内部镜像 DNS 无法下载 Surefire 依赖影响；`mvn -DskipTests package` 和 `mvn -DskipTests test-compile` 已通过。Lua 原子契约测试位于：
+2026-08-19 本机验证：`mvn test` 通过 4/4，`mvn -DskipTests package`、`mvn test-compile` 和前端 `npm run build` 均通过。Lua 原子契约测试位于：
 
 `src/test/java/com/seckill/service/SeckillLuaAtomicContractTest.java`
 

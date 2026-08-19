@@ -107,7 +107,7 @@ public class SeckillService {
                 case -1 -> "活动未开始或已结束";
                 case -2 -> "您已参与过本次活动";
                 case -3 -> "优惠券已抢光";
-                case -4 -> "操作过于频繁";
+                case -4 -> "活动已暂停";
                 default -> "未知错误";
             };
             return SeckillResponse.fail(reason);

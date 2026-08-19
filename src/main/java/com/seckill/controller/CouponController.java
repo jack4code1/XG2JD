@@ -48,11 +48,11 @@ public class CouponController {
         redisTemplate.opsForHash().put(couponKey, "per_user_max", saved.getPerUserMax());
         redisTemplate.opsForHash().put(couponKey, "status", 1);
 
-        // 字符串字段存为字符串
+        // 数值时间戳不会被 JSON 序列化器包裹引号，Lua 可直接比较。
         redisTemplate.opsForHash().put(couponKey, "start_time",
-                String.valueOf(saved.getStartTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()));
+                saved.getStartTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
         redisTemplate.opsForHash().put(couponKey, "end_time",
-                String.valueOf(saved.getEndTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()));
+                saved.getEndTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
 
         return saved;
     }

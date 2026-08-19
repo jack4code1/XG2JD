@@ -1,6 +1,6 @@
 # 高并发优惠券秒杀系统
 
-面向校招简历的秒杀项目，聚焦三个差异化：**热点自动发现与动态缓存降级**、**智能分配策略**、**全链路故障演练**。
+面向校招简历的秒杀项目，聚焦三个差异化：**高并发秒杀与最终一致性**、**可确认可审计的 AI 运营执行 Agent**、**热点自动发现与动态缓存降级**。
 
 完整启动、链路、接口、压测和排障信息见：[项目交接文档](docs/PROJECT_HANDOFF.md)；交给新的 AI coding agent 时同时提供：[AI 接手指令](docs/AI_BOOTSTRAP.md)。
 
@@ -108,6 +108,9 @@ AntiFraudStrategy(P0) → NewUserStrategy(P1) → DormantUserStrategy(P2) → De
 | `/api/order/{orderNo}` | GET | 查询订单 |
 | `/api/ai/eval` | POST | 运行 4 条 Copilot 固定评测问题（商家） |
 | `/api/ai/audits` | GET | 查询当前商户最近 20 次 AI 调用审计 |
+| `/api/ai/tasks` | POST/GET | 创建执行任务 / 查询最近任务（商家） |
+| `/api/ai/tasks/{taskNo}/confirm` | POST | 确认不可变 Proposal 并执行白名单工具 |
+| `/api/ai/tasks/{taskNo}/cancel` | POST | 取消尚未执行的任务 |
 
 ## 压测
 
@@ -127,6 +130,8 @@ python3 scripts/bench.py <并发数> <请求数> <couponId>
 ### AI 评测与观测
 
 商家登录后可调用 `POST /api/ai/eval`，固定验证分析、风控、活动策划和普通问答四类意图，同时检查结构化字段是否完整。每次 Copilot 调用会记录商户、问题、意图、耗时和是否降级到 `ai_audit_log`，不保存完整模型原文。
+
+AI 执行台支持创建活动、追加库存、暂停活动和恢复活动。自然语言先转换为持久化 Proposal，状态为 `WAITING_CONFIRMATION`；只有当前商户确认后才调用白名单业务工具。Proposal 在确认时不会重新生成，重复确认已完成任务不会重复写数据，任务结果和动作时间线分别保存在 `ai_task`、`ai_action`。
 
 Prometheus 指标包括：
 

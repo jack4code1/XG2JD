@@ -4,7 +4,7 @@
 -- ARGV[1]: userId
 -- ARGV[2]: currentTime (毫秒时间戳字符串, 同位数可字符串比较)
 -- ARGV[3]: perUserMax
--- 返回: -1=不在活动时间, -2=已抢过, -3=库存不足, >=0=扣减后的剩余库存
+-- 返回: -1=不在活动时间, -2=已抢过, -3=库存不足, -4=活动已暂停, >=0=扣减后的剩余库存
 
 local couponKey = KEYS[1]
 local userSetKey = KEYS[2]
@@ -12,7 +12,11 @@ local userSetKey = KEYS[2]
 local userId = string.gsub(ARGV[1], '^"(.*)"$', '%1')
 local currentTime = string.gsub(ARGV[2], '^"(.*)"$', '%1')
 
--- 1. 活动时间校验（等长字符串比较等价于数值比较）
+-- 1. 活动状态与时间校验（等长字符串比较等价于数值比较）
+local status = redis.call('HGET', couponKey, 'status')
+if status == false or status ~= '1' then
+    return -4
+end
 local startTime = redis.call('HGET', couponKey, 'start_time')
 local endTime = redis.call('HGET', couponKey, 'end_time')
 if startTime == false or endTime == false then

@@ -48,7 +48,7 @@ public class Coupon {
     private Integer perUserMax;
 
     @Column(nullable = false)
-    private Integer status; // 0=未开始 1=进行中 2=已结束
+    private Integer status; // 0=未开始 1=进行中 2=已结束 3=已暂停
 
     @Version
     @Column(nullable = false)

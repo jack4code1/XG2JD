@@ -1,7 +1,12 @@
 -- 本地测试数据：密码统一为 123456
 USE seckill;
 
+-- Ensure UTF-8 literals are decoded correctly regardless of the mysql client's default charset.
+SET NAMES utf8mb4;
+
 SET FOREIGN_KEY_CHECKS=0;
+TRUNCATE TABLE ai_action;
+TRUNCATE TABLE ai_task;
 TRUNCATE TABLE event_log;
 TRUNCATE TABLE ai_audit_log;
 TRUNCATE TABLE reconciliation_snapshot;
