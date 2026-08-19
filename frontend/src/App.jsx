@@ -28,9 +28,15 @@ export default function App() {
         </h1>
         <div className="flex items-center gap-3">
           {auth.user && (
-            <span className="text-xs text-gray-500">
-              {auth.user.username} {role === 'MERCHANT' ? '🏪' : '👤'}
-            </span>
+            <>
+              <span className="text-xs text-gray-500">
+                {auth.user.username} {role === 'MERCHANT' ? '🏪' : '👤'}
+              </span>
+              <button onClick={auth.logout}
+                className="text-xs text-gray-600 hover:text-red-400 transition-colors mr-2">
+                退出
+              </button>
+            </>
           )}
           <div className="flex gap-1 glass rounded-xl p-1">
             {role === 'MERCHANT' ? (
