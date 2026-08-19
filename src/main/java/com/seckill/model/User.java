@@ -37,6 +37,9 @@ public class User {
     @Column(name = "last_login_at")
     private LocalDateTime lastLoginAt;
 
+    @Column(length = 16)
+    private String role; // USER or MERCHANT
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();

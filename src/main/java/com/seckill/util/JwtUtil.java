@@ -35,14 +35,15 @@ public class JwtUtil {
     /**
      * 生成 Access Token (JWT)
      */
-    public String generateAccessToken(Long userId, String username) {
+    public String generateAccessToken(Long userId, String username, String role) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + accessExpireMinutes * 60_000L);
 
         return Jwts.builder()
-                .id(UUID.randomUUID().toString())  // jti — 用于登出黑名单
+                .id(UUID.randomUUID().toString())
                 .subject(userId.toString())
                 .claim("username", username)
+                .claim("role", role != null ? role : "USER")
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(secretKey)

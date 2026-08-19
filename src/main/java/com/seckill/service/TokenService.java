@@ -35,15 +35,14 @@ public class TokenService {
     /**
      * 生成 Token 对
      */
-    public LoginResponse generateTokens(Long userId, String username) {
-        String accessToken = jwtUtil.generateAccessToken(userId, username);
+    public LoginResponse generateTokens(Long userId, String username, String role) {
+        String accessToken = jwtUtil.generateAccessToken(userId, username, role);
         String refreshToken = generateRefreshToken();
 
-        // 存 Refresh Token 到 Redis Hash
         redisTemplate.opsForHash().put("refresh:token:" + refreshToken, "userId", userId.toString());
         redisTemplate.opsForHash().put("refresh:token:" + refreshToken, "username", username);
-        redisTemplate.expire("refresh:token:" + refreshToken,
-                Duration.ofDays(refreshExpireDays));
+        redisTemplate.opsForHash().put("refresh:token:" + refreshToken, "role", role != null ? role : "USER");
+        redisTemplate.expire("refresh:token:" + refreshToken, Duration.ofDays(refreshExpireDays));
 
         return LoginResponse.of(accessToken, refreshToken, 30 * 60);
     }
@@ -69,6 +68,8 @@ public class TokenService {
 
         Long userId = Long.parseLong(userIdObj.toString());
         String username = redisTemplate.opsForHash().get(tokenKey, "username").toString();
+        Object roleObj = redisTemplate.opsForHash().get(tokenKey, "role");
+        String role = roleObj != null ? roleObj.toString() : "USER";
 
         // 3. 旧 Token 加入黑名单（1小时过渡期）
         redisTemplate.opsForValue().set("refresh:blacklist:" + oldRefreshToken, "1",
@@ -77,7 +78,7 @@ public class TokenService {
         // 4. 删除旧 Token，生成新 Token
         redisTemplate.delete(tokenKey);
 
-        return generateTokens(userId, username);
+        return generateTokens(userId, username, role);
     }
 
     /**

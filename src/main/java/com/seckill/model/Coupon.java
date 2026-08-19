@@ -25,6 +25,9 @@ public class Coupon {
     @Column(name = "coupon_desc", length = 512)
     private String couponDesc;
 
+    @Column(name = "merchant_id")
+    private Long merchantId;
+
     @Column(name = "total_stock", nullable = false)
     private Integer totalStock;
 

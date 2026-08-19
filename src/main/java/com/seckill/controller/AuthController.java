@@ -4,6 +4,7 @@ import com.seckill.dto.LoginRequest;
 import com.seckill.dto.LoginResponse;
 import com.seckill.dto.RefreshRequest;
 import com.seckill.model.User;
+import com.seckill.repository.MerchantRepository;
 import com.seckill.repository.UserRepository;
 import com.seckill.service.TokenService;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,7 @@ import java.util.Map;
 public class AuthController {
 
     private final UserRepository userRepository;
+    private final MerchantRepository merchantRepository;
     private final TokenService tokenService;
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
@@ -34,13 +36,26 @@ public class AuthController {
             return Map.of("success", false, "message", "用户名已存在");
         }
 
+        String role = request.getRole() != null ? request.getRole().toUpperCase() : "USER";
+
         User user = User.builder()
                 .username(request.getUsername())
                 .password(passwordEncoder.encode(request.getPassword()))
+                .role(role)
                 .build();
         userRepository.save(user);
 
-        return Map.of("success", true, "message", "注册成功", "userId", user.getId());
+        // 商家注册时自动创建店铺
+        if ("MERCHANT".equals(role)) {
+            com.seckill.model.Merchant merchant = com.seckill.model.Merchant.builder()
+                    .userId(user.getId())
+                    .shopName(request.getUsername() + "的店铺")
+                    .category("其他")
+                    .build();
+            merchantRepository.save(merchant);
+        }
+
+        return Map.of("success", true, "message", "注册成功", "userId", user.getId(), "role", role);
     }
 
     /**
@@ -59,7 +74,7 @@ public class AuthController {
         user.setLastLoginAt(LocalDateTime.now());
         userRepository.save(user);
 
-        return tokenService.generateTokens(user.getId(), user.getUsername());
+        return tokenService.generateTokens(user.getId(), user.getUsername(), user.getRole());
     }
 
     /**

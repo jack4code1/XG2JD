@@ -10,6 +10,8 @@ export default function AiTab({ auth }) {
   const [plan, setPlan] = useState('')
   const [loading, setLoading] = useState(false)
   const [elapsed, setElapsed] = useState(0)
+  const [executing, setExecuting] = useState(false)
+  const [execResult, setExecResult] = useState(null)
   const resultRef = useRef(null)
 
   useEffect(() => { if (plan && resultRef.current) resultRef.current.scrollIntoView({ behavior: 'smooth' }) }, [plan])
@@ -17,13 +19,23 @@ export default function AiTab({ auth }) {
   const handleSubmit = async (e) => {
     e?.preventDefault()
     if (!query.trim() || loading) return
-    setLoading(true); setPlan('')
+    setLoading(true); setPlan(''); setExecResult(null)
     const t0 = performance.now()
     try {
       const { data } = await client.post('/ai/campaign/plan', { query })
       setPlan(data.plan); setElapsed(Math.round(performance.now() - t0))
-    } catch (e) { setPlan('AI服务暂不可用，请确保已设置 DEEPSEEK_API_KEY') }
+    } catch { setPlan('AI服务暂不可用，请确保已设置 DEEPSEEK_API_KEY') }
     setLoading(false)
+  }
+
+  const handleExecute = async () => {
+    setExecuting(true); setExecResult(null)
+    try {
+      const { data } = await client.post('/ai/campaign/execute', { query })
+      if (data.success) setExecResult(`✅ 活动已创建！ID:${data.couponId} 名称:${data.couponName}`)
+      else setExecResult(`❌ ${data.message}`)
+    } catch (e) { setExecResult('❌ 执行失败: ' + e.message) }
+    setExecuting(false)
   }
 
   return (
@@ -38,11 +50,11 @@ export default function AiTab({ auth }) {
 
       <GlassCard>
         <form onSubmit={handleSubmit} className="flex gap-3">
-          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="描述你的活动需求，例如：帮我策划一个双11秒杀..."
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="描述你的活动需求..."
             className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500" />
           <button type="submit" disabled={loading}
             className="gradient-btn text-white px-6 py-3 rounded-xl font-medium disabled:opacity-50 whitespace-nowrap">
-            {loading ? '⏳ Agent执行中...' : '🚀 开始策划'}
+            {loading ? '⏳ ...' : '🚀 策划'}
           </button>
         </form>
         <div className="flex gap-2 mt-3 flex-wrap">
@@ -56,8 +68,8 @@ export default function AiTab({ auth }) {
         <GlassCard>
           <div className="flex items-center justify-center gap-3 py-8">
             {[0,1,2,3].map(i => (
-              <motion.div key={i} animate={{ y: [0, -8, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }}
-                className="w-2 h-2 rounded-full" style={{ background: ['#6366f1','#10b981','#f59e0b','#8b5cf6'][i] }} />
+              <motion.div key={i} animate={{ y: [0,-8,0] }} transition={{ duration:0.6, repeat:Infinity, delay:i*0.15 }}
+                className="w-2 h-2 rounded-full" style={{ background:['#6366f1','#10b981','#f59e0b','#8b5cf6'][i] }} />
             ))}
             <span className="text-sm text-gray-500">4个Agent并行分析中...</span>
           </div>
@@ -65,14 +77,25 @@ export default function AiTab({ auth }) {
       )}
 
       {plan && (
-        <motion.div ref={resultRef} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+        <motion.div ref={resultRef} initial={{ opacity:0, y:20 }} animate={{ opacity:1, y:0 }}>
           <GlassCard>
             <div className="flex items-center justify-between mb-4">
               <span className="text-xs text-gray-500">⚡ 4Agent并行 · {elapsed}ms</span>
-              <button onClick={() => navigator.clipboard.writeText(plan)}
-                className="text-xs glass glass-hover px-3 py-1 rounded-lg text-gray-400 hover:text-white">📋 复制</button>
+              <div className="flex gap-2">
+                <button onClick={() => navigator.clipboard.writeText(plan)}
+                  className="text-xs glass glass-hover px-3 py-1 rounded-lg text-gray-400 hover:text-white">📋</button>
+                <button onClick={handleExecute} disabled={executing}
+                  className="text-xs gradient-btn text-white px-3 py-1 rounded-lg disabled:opacity-50">
+                  {executing ? '⏳' : '🚀 一键创建活动'}
+                </button>
+              </div>
             </div>
             <div className="text-sm whitespace-pre-wrap leading-relaxed text-gray-300 font-mono text-xs">{plan}</div>
+            {execResult && (
+              <div className={`mt-4 p-3 rounded-xl text-sm ${execResult.startsWith('✅') ? 'bg-green-500/10 border border-green-500/20 text-green-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'}`}>
+                {execResult}
+              </div>
+            )}
           </GlassCard>
         </motion.div>
       )}

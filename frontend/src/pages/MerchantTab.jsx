@@ -11,12 +11,7 @@ export default function MerchantTab({ auth }) {
   const [drillLoading, setDrillLoading] = useState(false)
 
   if (!user) {
-    return (
-      <GlassCard className="max-w-sm mx-auto mt-20 text-center py-8">
-        <div className="text-4xl mb-3">🔒</div>
-        <p className="text-gray-400">请先在「👤 用户端」登录后再使用商家功能</p>
-      </GlassCard>
-    )
+    return <GlassCard className="max-w-sm mx-auto mt-20 text-center py-8"><div className="text-4xl mb-3">🔒</div><p className="text-gray-400">请先登录商家账号</p></GlassCard>
   }
 
   const handleCreate = async (e) => {
@@ -40,9 +35,7 @@ export default function MerchantTab({ auth }) {
       await new Promise(r => setTimeout(r, 3000))
       const { data: recover } = await client.post('/drill/recover')
       setDrillStatus({ ...recover, phase: 'recover' })
-    } catch (e) {
-      setDrillStatus({ scenario, phase: 'error', message: e.message })
-    }
+    } catch (e) { setDrillStatus({ scenario, phase: 'error', message: e.message }) }
     setDrillLoading(false)
   }
 
@@ -69,31 +62,22 @@ export default function MerchantTab({ auth }) {
         {created && (
           <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }}
             className="mt-4 p-3 rounded-xl bg-green-500/10 border border-green-500/20 text-sm text-green-400">
-            ✅ 已创建: {created.couponName} (ID:{created.id}) · 库存{created.totalStock} · 已预热到Redis
+            ✅ 已创建: {created.couponName} (ID:{created.id}) · 库存{created.totalStock} · 已预热
           </motion.div>
         )}
       </GlassCard>
 
       <GlassCard>
-        <h2 className="text-lg font-bold mb-4 gradient-text">⚡ 故障演练控制台</h2>
+        <h2 className="text-lg font-bold mb-4 gradient-text">⚡ 故障演练</h2>
         <div className="grid grid-cols-2 gap-3">
-          {[{ key: 'redis', label: '🔴 Redis宕机', desc: 'L1缓存兜底' },
-            { key: 'mq', label: '🟡 MQ积压', desc: '死信队列测试' },
-            { key: 'db', label: '🟠 DB慢查询', desc: 'Sentinel熔断' },
-            { key: 'network', label: '🔵 网络延迟', desc: '超时重试' }].map(s => (
+          {[{ key: 'redis', label: '🔴 Redis宕机' },{ key: 'mq', label: '🟡 MQ积压' },
+            { key: 'db', label: '🟠 DB慢查询' },{ key: 'network', label: '🔵 网络延迟' }].map(s => (
             <button key={s.key} onClick={() => handleDrill(s.key)} disabled={drillLoading}
-              className="glass glass-hover rounded-xl p-4 text-left transition-all disabled:opacity-50">
-              <div className="text-sm font-medium">{s.label}</div><div className="text-xs text-gray-500 mt-1">{s.desc}</div>
+              className="glass glass-hover rounded-xl p-4 text-left disabled:opacity-50">
+              <div className="text-sm font-medium">{s.label}</div>
             </button>
           ))}
         </div>
-        {drillStatus && (
-          <div className={`mt-4 p-3 rounded-xl text-sm ${drillStatus.phase === 'recover' ? 'bg-green-500/10 border border-green-500/20 text-green-400' : drillStatus.phase === 'error' ? 'bg-red-500/10 border border-red-500/20 text-red-400' : 'bg-yellow-500/10 border border-yellow-500/20 text-yellow-400'}`}>
-            {drillStatus.phase === 'inject' && `🔧 ${drillStatus.scenario} 故障注入中...`}
-            {drillStatus.phase === 'recover' && `✅ ${drillStatus.scenario} 恢复完成 (${drillStatus.durationMs}ms)`}
-            {drillStatus.phase === 'error' && `❌ ${drillStatus.message}`}
-          </div>
-        )}
       </GlassCard>
     </div>
   )

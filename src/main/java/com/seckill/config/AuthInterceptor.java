@@ -36,6 +36,11 @@ public class AuthInterceptor implements HandlerInterceptor {
             return true;
         }
 
+        // 放行商家列表（商城浏览）
+        if (path.contains("/api/merchant/")) {
+            return true;
+        }
+
         // 放行健康检查
         if (path.contains("/actuator")) {
             return true;
@@ -62,7 +67,8 @@ public class AuthInterceptor implements HandlerInterceptor {
             // 3. 设置用户上下文
             Long userId = Long.parseLong(claims.getSubject());
             String username = claims.get("username", String.class);
-            UserContext.set(userId, username);
+            String role = claims.get("role", String.class);
+            UserContext.set(userId, username, role != null ? role : "USER");
 
             return true;
 
