@@ -97,3 +97,15 @@ CREATE TABLE IF NOT EXISTS reconciliation_snapshot (
     reconciled_at DATETIME,
     UNIQUE KEY uk_date_coupon (snap_date, coupon_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- AI 运营调用审计：记录商户问题、意图、耗时和是否降级，不保存完整模型原文
+CREATE TABLE IF NOT EXISTS ai_audit_log (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    merchant_id BIGINT NOT NULL,
+    query VARCHAR(512) NOT NULL,
+    intent VARCHAR(32),
+    elapsed_ms BIGINT,
+    degraded BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_ai_audit_merchant_time (merchant_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -10,6 +10,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -21,6 +22,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * 秒杀核心服务
@@ -39,6 +42,7 @@ public class SeckillService {
     private final RabbitTemplate rabbitTemplate;
     private final AllocationService allocationService;
     private final HotKeyDetector hotKeyDetector;
+    private final MeterRegistry meterRegistry;
 
     private final DefaultRedisScript<Long> checkQualifyScript;
 
@@ -124,11 +128,28 @@ public class SeckillService {
                 .timestamp(System.currentTimeMillis())
                 .build();
 
-        rabbitTemplate.convertAndSend(
-                RabbitMQConfig.ORDER_CREATE_EXCHANGE,
-                RabbitMQConfig.ORDER_CREATE_KEY,
-                message
-        );
+        Counter.builder("seckill.requests").tag("result", "success").register(meterRegistry).increment();
+        CorrelationData correlation = new CorrelationData(orderNo);
+        try {
+            rabbitTemplate.convertAndSend(
+                    RabbitMQConfig.ORDER_CREATE_EXCHANGE,
+                    RabbitMQConfig.ORDER_CREATE_KEY,
+                    message,
+                    correlation
+            );
+            var confirm = correlation.getFuture().get(2, TimeUnit.SECONDS);
+            if (confirm != null && !confirm.isAck()) {
+                throw new IllegalStateException("RabbitMQ 发布确认失败");
+            }
+        } catch (java.util.concurrent.TimeoutException e) {
+            // 超时属于结果未知，不能盲目回补库存；订单结果接口会继续等待异步落库。
+            Counter.builder("seckill.mq.confirm.timeout").register(meterRegistry).increment();
+            log.warn("RabbitMQ 发布确认超时，保留异步订单: orderNo={}", orderNo);
+        } catch (Exception e) {
+            Counter.builder("seckill.mq.publish.failure").register(meterRegistry).increment();
+            log.error("RabbitMQ 发布失败: orderNo={}", orderNo, e);
+            return SeckillResponse.fail("系统繁忙，订单消息未确认，请稍后重试");
+        }
 
         long elapsed = System.currentTimeMillis() - startTime;
         log.info("秒杀成功: userId={}, couponId={}, orderNo={}, weight={}, elapsed={}ms",

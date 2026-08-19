@@ -5,6 +5,8 @@ import com.seckill.agent.tools.RiskAnalysisTools;
 import com.seckill.agent.tools.StrategyTools;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
@@ -30,6 +32,7 @@ public class AgentOrchestrator {
     private final DataAnalysisTools dataTools;
     private final RiskAnalysisTools riskTools;
     private final StrategyTools strategyTools;
+    private final MeterRegistry meterRegistry;
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
 
     public AgentOrchestrator(@Qualifier("dataAgent") ChatClient dataAgent,
@@ -38,7 +41,8 @@ public class AgentOrchestrator {
                               @Qualifier("strategyAgent") ChatClient strategyAgent,
                               DataAnalysisTools dataTools,
                               RiskAnalysisTools riskTools,
-                              StrategyTools strategyTools) {
+                              StrategyTools strategyTools,
+                              MeterRegistry meterRegistry) {
         this.dataAgent = dataAgent;
         this.riskAgent = riskAgent;
         this.contentAgent = contentAgent;
@@ -46,6 +50,7 @@ public class AgentOrchestrator {
         this.dataTools = dataTools;
         this.riskTools = riskTools;
         this.strategyTools = strategyTools;
+        this.meterRegistry = meterRegistry;
     }
 
     /**
@@ -57,6 +62,7 @@ public class AgentOrchestrator {
 
     public Map<String, Object> copilot(String query, Long merchantId) {
         long start = System.currentTimeMillis();
+        Counter.builder("ai.copilot.requests").register(meterRegistry).increment();
         String request = query == null || query.isBlank() ? "分析当前秒杀运营情况" : query.trim();
         Map<String, Object> metrics = dataTools.snapshot(merchantId);
         Map<String, Object> risks = riskTools.snapshot();
@@ -94,8 +100,11 @@ public class AgentOrchestrator {
                 : List.of(Map.of("id", "REFRESH_INSIGHTS", "label", "刷新实时数据", "requiresConfirmation", false)));
         result.put("requiresConfirmation", intent.equals("CAMPAIGN"));
         result.put("elapsedMs", System.currentTimeMillis() - start);
-        result.put("degraded", data.join().startsWith("[本地降级]") || risk.join().startsWith("[本地降级]")
-                || content.join().startsWith("[本地降级]") || strategyAgentResult.join().startsWith("[本地降级]"));
+        boolean degraded = data.join().startsWith("[本地降级]") || risk.join().startsWith("[本地降级]")
+                || content.join().startsWith("[本地降级]") || strategyAgentResult.join().startsWith("[本地降级]");
+        result.put("degraded", degraded);
+        result.put("observability", Map.of("latencyMs", result.get("elapsedMs"), "degraded", degraded));
+        if (degraded) Counter.builder("ai.copilot.degraded").register(meterRegistry).increment();
         return result;
     }
 

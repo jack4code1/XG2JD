@@ -104,6 +104,8 @@ AntiFraudStrategy(P0) → NewUserStrategy(P1) → DormantUserStrategy(P2) → De
 | `/api/seckill/execute` | POST | 秒杀（需登录） |
 | `/api/seckill/result/{orderNo}` | GET | 查询异步秒杀订单结果（需登录且只能查本人） |
 | `/api/order/{orderNo}` | GET | 查询订单 |
+| `/api/ai/eval` | POST | 运行 4 条 Copilot 固定评测问题（商家） |
+| `/api/ai/audits` | GET | 查询当前商户最近 20 次 AI 调用审计 |
 
 ## 压测
 
@@ -119,6 +121,22 @@ python3 scripts/bench.py <并发数> <请求数> <couponId>
 ```
 
 纯秒杀压测脚本会输出成功数、Redis 剩余库存和重复订单号数量。库存为 `N` 时，成功订单数不应超过 `N`，重复订单号应为 `0`。执行前请确认优惠券活动时间有效，并准备 `/tmp/seckill_tokens.txt`。
+
+### AI 评测与观测
+
+商家登录后可调用 `POST /api/ai/eval`，固定验证分析、风控、活动策划和普通问答四类意图，同时检查结构化字段是否完整。每次 Copilot 调用会记录商户、问题、意图、耗时和是否降级到 `ai_audit_log`，不保存完整模型原文。
+
+Prometheus 指标包括：
+
+```text
+seckill_requests_total{result="success"}
+seckill_mq_confirm_timeout_total
+seckill_mq_publish_failure_total
+ai_copilot_requests_total
+ai_copilot_degraded_total
+```
+
+RabbitMQ 开启 correlated publisher confirm；消费者继续使用订单号幂等，发布确认超时时保留订单结果轮询，不盲目回补库存，避免“消息已到达但确认包延迟”造成重复库存。
 
 ### 压测结果
 ```

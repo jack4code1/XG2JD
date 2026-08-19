@@ -3,6 +3,8 @@ package com.seckill.controller;
 import com.seckill.agent.AgentOrchestrator;
 import com.seckill.repository.CouponRepository;
 import com.seckill.repository.MerchantRepository;
+import com.seckill.repository.AiAuditLogRepository;
+import com.seckill.model.AiAuditLog;
 import com.seckill.exception.ForbiddenException;
 import com.seckill.util.UserContext;
 import lombok.RequiredArgsConstructor;
@@ -10,6 +12,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.List;
 
 /**
  * AI Agent API — Multi-Agent 运营团队入口
@@ -27,6 +30,7 @@ public class AiAgentController {
     private final CouponRepository couponRepository;
     private final MerchantRepository merchantRepository;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final AiAuditLogRepository aiAuditLogRepository;
 
     /**
      * AI 策划活动
@@ -51,7 +55,46 @@ public class AiAgentController {
     @PostMapping("/copilot/query")
     public Map<String, Object> copilot(@RequestBody Map<String, String> request) {
         requireMerchant();
-        return orchestrator.copilot(request.get("query"), currentMerchantId());
+        Long merchantId = currentMerchantId();
+        Map<String, Object> result = orchestrator.copilot(request.get("query"), merchantId);
+        saveAudit(merchantId, result);
+        return result;
+    }
+
+    /** 返回最近 20 次 Copilot 调用，供商家复盘 AI 推荐质量和降级情况。 */
+    @GetMapping("/audits")
+    public java.util.List<AiAuditLog> audits() {
+        requireMerchant();
+        return aiAuditLogRepository.findTop20ByMerchantIdOrderByCreatedAtDesc(currentMerchantId());
+    }
+
+    /** 固定问题集的轻量评测，验证意图识别、结构化输出和降级可用性。 */
+    @PostMapping("/eval")
+    public Map<String, Object> eval() {
+        requireMerchant();
+        Long merchantId = currentMerchantId();
+        List<Map<String, String>> cases = List.of(
+                Map.of("query", "分析最近7天经营情况", "intent", "ANALYSIS"),
+                Map.of("query", "检查当前活动的风控风险", "intent", "RISK"),
+                Map.of("query", "帮我策划一个新客优惠券活动", "intent", "CAMPAIGN"),
+                Map.of("query", "优惠券怎么使用", "intent", "ASSIST")
+        );
+        List<Map<String, Object>> results = new java.util.ArrayList<>();
+        for (Map<String, String> testCase : cases) {
+            Map<String, Object> result = orchestrator.copilot(testCase.get("query"), merchantId);
+            saveAudit(merchantId, result);
+            boolean structured = result.containsKey("metrics") && result.containsKey("agents") && result.containsKey("actions");
+            results.add(Map.of(
+                    "query", testCase.get("query"),
+                    "expectedIntent", testCase.get("intent"),
+                    "actualIntent", result.get("intent"),
+                    "intentPass", testCase.get("intent").equals(result.get("intent")),
+                    "structuredPass", structured,
+                    "degraded", result.get("degraded"),
+                    "elapsedMs", result.get("elapsedMs")));
+        }
+        long passed = results.stream().filter(r -> Boolean.TRUE.equals(r.get("intentPass")) && Boolean.TRUE.equals(r.get("structuredPass"))).count();
+        return Map.of("total", results.size(), "passed", passed, "passRate", passed * 100.0 / results.size(), "cases", results);
     }
 
     /** 写操作必须由商家二次确认后调用，避免模型直接修改业务数据。 */
@@ -144,6 +187,16 @@ public class AiAgentController {
     private Long currentMerchantId() {
         return merchantRepository.findByUserId(UserContext.getUserId())
                 .orElseThrow(() -> new IllegalArgumentException("商家店铺不存在")).getId();
+    }
+
+    private void saveAudit(Long merchantId, Map<String, Object> result) {
+        aiAuditLogRepository.save(AiAuditLog.builder()
+                .merchantId(merchantId)
+                .query(String.valueOf(result.getOrDefault("query", "")))
+                .intent(String.valueOf(result.getOrDefault("intent", "UNKNOWN")))
+                .elapsedMs(((Number) result.getOrDefault("elapsedMs", 0L)).longValue())
+                .degraded(Boolean.TRUE.equals(result.get("degraded")))
+                .build());
     }
 
     private String extract(String plan, String keyword, String defaultValue) {

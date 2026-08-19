@@ -3,6 +3,7 @@ USE seckill;
 
 SET FOREIGN_KEY_CHECKS=0;
 TRUNCATE TABLE event_log;
+TRUNCATE TABLE ai_audit_log;
 TRUNCATE TABLE reconciliation_snapshot;
 TRUNCATE TABLE t_order;
 TRUNCATE TABLE t_coupon;
