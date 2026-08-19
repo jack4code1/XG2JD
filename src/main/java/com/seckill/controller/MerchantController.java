@@ -50,7 +50,7 @@ public class MerchantController {
             map.put("category", m.getCategory());
             map.put("couponCount", coupons.size());
             map.put("coupons", coupons);
-            map.put("products", productRepository.findByMerchantIdAndStatusOrderByCreatedAtDesc(m.getId(), 1));
+            map.put("products", productRepository.findByMerchantIdOrderByCreatedAtDesc(m.getId()));
             return map;
     }
 

@@ -103,6 +103,8 @@ AntiFraudStrategy(P0) → NewUserStrategy(P1) → DormantUserStrategy(P2) → De
 | `/api/auth/refresh` | POST | 刷新Token |
 | `/api/auth/logout` | POST | 登出 |
 | `/api/coupon/create` | POST | 创建优惠券（需登录） |
+| `/api/coupon/{couponId}` | PUT | 编辑本店优惠券、追加库存、暂停/恢复并同步 Redis（商家） |
+| `/api/product/{productId}` | PUT | 编辑本店商品、库存和上下架状态（商家） |
 | `/api/seckill/execute` | POST | 秒杀（需登录） |
 | `/api/seckill/result/{orderNo}` | GET | 查询异步秒杀订单结果（需登录且只能查本人） |
 | `/api/order/{orderNo}` | GET | 查询订单 |

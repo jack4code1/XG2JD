@@ -47,6 +47,32 @@ public class ProductController {
         return productRepository.save(product);
     }
 
+    /** 当前商户编辑商品资料、库存和上下架状态。 */
+    @PutMapping("/{productId}")
+    @Transactional
+    public Product update(@PathVariable Long productId, @RequestBody Product request) {
+        MerchantAccess.requireMerchant();
+        Product product = ownedProduct(productId);
+        if (request.getName() != null) {
+            if (request.getName().isBlank()) throw new IllegalArgumentException("商品名称不能为空");
+            product.setName(request.getName().trim());
+        }
+        if (request.getDescription() != null) product.setDescription(request.getDescription().trim());
+        if (request.getPrice() != null) {
+            if (request.getPrice().compareTo(BigDecimal.ZERO) <= 0) throw new IllegalArgumentException("商品价格必须大于 0");
+            product.setPrice(request.getPrice());
+        }
+        if (request.getRemainStock() != null) {
+            if (request.getRemainStock() < 0) throw new IllegalArgumentException("商品库存不能小于 0");
+            product.setRemainStock(request.getRemainStock());
+        }
+        if (request.getStatus() != null) {
+            if (request.getStatus() != 0 && request.getStatus() != 1) throw new IllegalArgumentException("商品状态只能是上架或下架");
+            product.setStatus(request.getStatus());
+        }
+        return productRepository.save(product);
+    }
+
     @PostMapping("/{productId}/purchase")
     @Transactional
     public Map<String, Object> purchase(@PathVariable Long productId, @RequestBody(required = false) Map<String, Long> body) {
@@ -91,6 +117,13 @@ public class ProductController {
     }
 
     private Long currentMerchantId() { return merchantRepository.findByUserId(UserContext.getUserId()).orElseThrow(() -> new IllegalArgumentException("商家店铺不存在")).getId(); }
+
+    private Product ownedProduct(Long productId) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new IllegalArgumentException("商品不存在"));
+        if (!currentMerchantId().equals(product.getMerchantId())) throw new ForbiddenException("无权管理其他商户的商品");
+        return product;
+    }
 
     private static class MerchantAccess {
         static void requireMerchant() { if (!"MERCHANT".equals(UserContext.getRole())) throw new ForbiddenException("只有商家可以管理商品"); }

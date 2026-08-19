@@ -24,7 +24,7 @@ public class Product {
     @Column(name = "remain_stock", nullable = false)
     private Integer remainStock;
     @Column(nullable = false)
-    private Integer status = 1;
+    private Integer status = 1; // 0=已下架 1=销售中
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
     @Column(name = "updated_at")
