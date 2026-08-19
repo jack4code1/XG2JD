@@ -3,25 +3,30 @@ import { motion } from 'framer-motion'
 import GlassCard from '../components/GlassCard'
 import client from '../api/client'
 
-export default function MerchantTab() {
+export default function MerchantTab({ auth }) {
+  const { user } = auth
   const [form, setForm] = useState({ couponName: '', totalStock: 100, perUserMax: 1, endHours: 24 })
   const [created, setCreated] = useState(null)
   const [drillStatus, setDrillStatus] = useState(null)
   const [drillLoading, setDrillLoading] = useState(false)
 
+  if (!user) {
+    return (
+      <GlassCard className="max-w-sm mx-auto mt-20 text-center py-8">
+        <div className="text-4xl mb-3">🔒</div>
+        <p className="text-gray-400">请先在「👤 用户端」登录后再使用商家功能</p>
+      </GlassCard>
+    )
+  }
+
   const handleCreate = async (e) => {
     e.preventDefault()
     try {
-      const now = new Date()
-      const end = new Date(now.getTime() + form.endHours * 3600000)
+      const now = new Date(), end = new Date(now.getTime() + form.endHours * 3600000)
       const { data } = await client.post('/coupon/create', {
-        couponName: form.couponName,
-        totalStock: Number(form.totalStock),
-        remainStock: Number(form.totalStock),
-        startTime: now.toISOString(),
-        endTime: end.toISOString(),
-        perUserMax: Number(form.perUserMax),
-        status: 1
+        couponName: form.couponName, totalStock: Number(form.totalStock),
+        remainStock: Number(form.totalStock), startTime: now.toISOString(),
+        endTime: end.toISOString(), perUserMax: Number(form.perUserMax), status: 1
       })
       setCreated(data)
     } catch (e) { alert('创建失败: ' + (e.response?.data?.message || e.message)) }
@@ -43,33 +48,23 @@ export default function MerchantTab() {
 
   return (
     <div className="space-y-6">
-      {/* Create Coupon */}
       <GlassCard>
         <h2 className="text-lg font-bold mb-4 gradient-text">📦 创建优惠券活动</h2>
         <form onSubmit={handleCreate} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <input value={form.couponName} onChange={e => setForm({...form, couponName: e.target.value})}
-              placeholder="优惠券名称" required
-              className="bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 col-span-2" />
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">总库存</label>
+          <input value={form.couponName} onChange={e => setForm({...form, couponName: e.target.value})}
+            placeholder="优惠券名称" required className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500" />
+          <div className="grid grid-cols-3 gap-4">
+            <div><label className="text-xs text-gray-500 mb-1 block">总库存</label>
               <input type="number" value={form.totalStock} onChange={e => setForm({...form, totalStock: e.target.value})}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">每人限购</label>
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500" /></div>
+            <div><label className="text-xs text-gray-500 mb-1 block">每人限购</label>
               <input type="number" value={form.perUserMax} onChange={e => setForm({...form, perUserMax: e.target.value})}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">活动时长(小时)</label>
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500" /></div>
+            <div><label className="text-xs text-gray-500 mb-1 block">时长(小时)</label>
               <input type="number" value={form.endHours} onChange={e => setForm({...form, endHours: e.target.value})}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500" />
-            </div>
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500" /></div>
           </div>
-          <button type="submit" className="w-full gradient-btn text-white py-3 rounded-xl font-medium">
-            创建活动 + 预热Redis
-          </button>
+          <button type="submit" className="w-full gradient-btn text-white py-3 rounded-xl font-medium">创建活动 + 预热Redis</button>
         </form>
         {created && (
           <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }}
@@ -79,29 +74,21 @@ export default function MerchantTab() {
         )}
       </GlassCard>
 
-      {/* Fault Drill */}
       <GlassCard>
         <h2 className="text-lg font-bold mb-4 gradient-text">⚡ 故障演练控制台</h2>
         <div className="grid grid-cols-2 gap-3">
-          {[
-            { key: 'redis', label: '🔴 Redis宕机', desc: 'L1缓存兜底' },
+          {[{ key: 'redis', label: '🔴 Redis宕机', desc: 'L1缓存兜底' },
             { key: 'mq', label: '🟡 MQ积压', desc: '死信队列测试' },
             { key: 'db', label: '🟠 DB慢查询', desc: 'Sentinel熔断' },
-            { key: 'network', label: '🔵 网络延迟', desc: '超时重试' },
-          ].map(s => (
+            { key: 'network', label: '🔵 网络延迟', desc: '超时重试' }].map(s => (
             <button key={s.key} onClick={() => handleDrill(s.key)} disabled={drillLoading}
               className="glass glass-hover rounded-xl p-4 text-left transition-all disabled:opacity-50">
-              <div className="text-sm font-medium">{s.label}</div>
-              <div className="text-xs text-gray-500 mt-1">{s.desc}</div>
+              <div className="text-sm font-medium">{s.label}</div><div className="text-xs text-gray-500 mt-1">{s.desc}</div>
             </button>
           ))}
         </div>
         {drillStatus && (
-          <div className={`mt-4 p-3 rounded-xl text-sm ${
-            drillStatus.phase === 'recover' ? 'bg-green-500/10 border border-green-500/20 text-green-400'
-            : drillStatus.phase === 'error' ? 'bg-red-500/10 border border-red-500/20 text-red-400'
-            : 'bg-yellow-500/10 border border-yellow-500/20 text-yellow-400'
-          }`}>
+          <div className={`mt-4 p-3 rounded-xl text-sm ${drillStatus.phase === 'recover' ? 'bg-green-500/10 border border-green-500/20 text-green-400' : drillStatus.phase === 'error' ? 'bg-red-500/10 border border-red-500/20 text-red-400' : 'bg-yellow-500/10 border border-yellow-500/20 text-yellow-400'}`}>
             {drillStatus.phase === 'inject' && `🔧 ${drillStatus.scenario} 故障注入中...`}
             {drillStatus.phase === 'recover' && `✅ ${drillStatus.scenario} 恢复完成 (${drillStatus.durationMs}ms)`}
             {drillStatus.phase === 'error' && `❌ ${drillStatus.message}`}
