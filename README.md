@@ -46,6 +46,20 @@ mvn package -DskipTests
 java -jar target/seckill-coupon-1.0.0.jar
 ```
 
+### 本地测试账号
+
+执行 `mysql -u root -proot123 -h 127.0.0.1 -P 3306 < src/main/resources/sql/test-data.sql` 可重置为以下数据，密码均为 `123456`：
+
+重置后执行 `redis-cli FLUSHDB`，再启动后端并为进行中的优惠券预热 Redis。
+
+| 类型 | 账号 | 店铺 |
+|------|------|------|
+| 商户 | `merchant_food` | 火焰小食铺 |
+| 商户 | `merchant_fashion` | 拾光衣橱 |
+| 用户 | `test_user` | - |
+| 用户 | `test_user_2` | - |
+| 用户 | `test_user_3` | - |
+
 ## 核心架构
 
 ### 秒杀全链路（5层漏斗）
