@@ -84,8 +84,16 @@
 .order-row { min-height:76px; padding:15px 0; border-bottom:1px solid #f2f2f2; }
 .order-row:last-child { border-bottom:0; }
 .order-row strong { font-size:14px; }
+.order-sections { display:grid; gap:28px; }
+.order-section-heading { display:flex; align-items:center; justify-content:space-between; margin:0 0 12px; }
+.order-section-heading h3 { margin:0 0 5px; font-size:18px; }
+.order-section-heading span { color:#999; font-size:12px; }
+.order-section-heading b { display:grid; place-items:center; min-width:28px; height:28px; border-radius:50%; color:#ff2442; background:#fff0f2; font-size:12px; }
+.order-price { color:#ff2442; }
+.order-status-action { display:flex; align-items:center; justify-content:flex-end; gap:12px; }
 .order-actions { display:flex; gap:8px; justify-content:flex-end; }
 .order-actions .primary-btn, .order-actions .logout { padding:8px 13px; }
+.section-empty { padding:28px 24px; color:#aaa; background:#fff; border:1px dashed #e5e5e5; border-radius:4px; font-size:13px; }
 .status-badge { display:inline-flex; width:max-content; padding:5px 8px; border-radius:3px; background:#f6f6f6; color:#777; font-size:12px; }
 .status-created { color:#ff2442; background:#fff0f2; }
 .status-paid, .status-used { color:#0c8c70; background:#eafaf5; }
@@ -152,6 +160,7 @@
   .shop-hero { padding:28px 24px; }
   .order-panel { padding:0 14px; overflow:auto; }
   .order-header, .order-row { min-width:640px; }
+  .order-section-heading { margin-bottom:10px; }
   .ai-query-row { flex-direction:column; }
   .result-heading { align-items:flex-start; }
 }
