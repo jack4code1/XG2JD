@@ -3,6 +3,7 @@ package com.seckill.agent.tools;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import java.util.Map;
+import java.util.LinkedHashMap;
 
 @Slf4j
 @Component
@@ -24,6 +25,26 @@ public class StrategyTools {
 
     public String suggestAllocationStrategy(Map<String, Object> args) {
         return "新用户+50权重, 沉睡用户+30权重, 防黄牛滑动窗60s/10次, 基础权重100";
+    }
+
+    public Map<String, Object> recommend(String query) {
+        String normalized = query == null ? "" : query;
+        Map<String, Object> result = new LinkedHashMap<>();
+        if (normalized.contains("双11") || normalized.contains("大促")) {
+            result.put("stock", 3000);
+            result.put("durationHours", 4);
+            result.put("perUserMax", 1);
+        } else if (normalized.contains("新用户")) {
+            result.put("stock", 500);
+            result.put("durationHours", 72);
+            result.put("perUserMax", 2);
+        } else {
+            result.put("stock", 800);
+            result.put("durationHours", 24);
+            result.put("perUserMax", 1);
+        }
+        result.put("allocation", "基础权重100；新用户+50；沉睡用户+30；风控滑动窗口60秒/10次");
+        return result;
     }
 
     private String getStr(Map<String, Object> args, String key, String def) {

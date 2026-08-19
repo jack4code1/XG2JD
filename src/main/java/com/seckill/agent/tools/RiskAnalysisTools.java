@@ -5,6 +5,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.List;
 
 @Slf4j
 @Component
@@ -23,5 +25,14 @@ public class RiskAnalysisTools {
 
     public String getSecurityStatus(Map<String, Object> args) {
         return "设备指纹✅ 滑动窗口✅ 一人一单✅ Sentinel限流✅";
+    }
+
+    public Map<String, Object> snapshot() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        Long blacklist = redisTemplate.opsForSet().size("anti_fraud:blacklist");
+        result.put("blacklistedDevices", blacklist == null ? 0 : blacklist);
+        result.put("controls", List.of("device-fingerprint", "sliding-window", "one-user-one-order", "sentinel-rate-limit"));
+        result.put("riskLevel", blacklist != null && blacklist > 0 ? "MEDIUM" : "LOW");
+        return result;
     }
 }

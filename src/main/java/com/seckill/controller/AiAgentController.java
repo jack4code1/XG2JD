@@ -46,6 +46,52 @@ public class AiAgentController {
     }
 
     /**
+     * AI 运营 Copilot：实时数据快照 → 意图识别 → Agent 并行分析 → 结构化动作。
+     */
+    @PostMapping("/copilot/query")
+    public Map<String, Object> copilot(@RequestBody Map<String, String> request) {
+        requireMerchant();
+        return orchestrator.copilot(request.get("query"));
+    }
+
+    /** 写操作必须由商家二次确认后调用，避免模型直接修改业务数据。 */
+    @PostMapping("/copilot/execute")
+    public Map<String, Object> executeCopilot(@RequestBody Map<String, String> request) {
+        requireMerchant();
+        Map<String, Object> result = orchestrator.copilot(request.get("query"));
+        if (!"CAMPAIGN".equals(result.get("intent"))) {
+            throw new IllegalArgumentException("当前对话没有可执行的活动创建动作");
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, Object> recommendation = (Map<String, Object>) result.get("recommendation");
+        @SuppressWarnings("unchecked")
+        Map<String, String> agents = (Map<String, String>) result.get("agents");
+        int stock = ((Number) recommendation.getOrDefault("stock", 800)).intValue();
+        int hours = ((Number) recommendation.getOrDefault("durationHours", 24)).intValue();
+        int perUserMax = ((Number) recommendation.getOrDefault("perUserMax", 1)).intValue();
+        String content = agents.getOrDefault("content", "限时秒杀券");
+        String couponName = extract(content, "优惠券名称", "限时秒杀券");
+
+        var now = java.time.LocalDateTime.now();
+        var coupon = new com.seckill.model.Coupon();
+        coupon.setMerchantId(merchantRepository.findByUserId(UserContext.getUserId())
+                .orElseThrow(() -> new IllegalArgumentException("商家店铺不存在")).getId());
+        coupon.setCouponName(couponName);
+        coupon.setCouponDesc(content);
+        coupon.setTotalStock(stock);
+        coupon.setRemainStock(stock);
+        coupon.setStartTime(now);
+        coupon.setEndTime(now.plusHours(hours));
+        coupon.setPerUserMax(perUserMax);
+        coupon.setStatus(1);
+        couponRepository.save(coupon);
+        warmup(coupon);
+
+        return Map.of("success", true, "couponId", coupon.getId(), "couponName", couponName,
+                "stock", stock, "durationHours", hours, "copilot", result);
+    }
+
+    /**
      * AI一键执行：分析方案 → 自动创建活动
      */
     @PostMapping("/campaign/execute")
@@ -102,6 +148,19 @@ public class AiAgentController {
             }
         }
         return defaultValue;
+    }
+
+    private void warmup(com.seckill.model.Coupon coupon) {
+        String key = "seckill:coupon:" + coupon.getId();
+        Map<String, Object> fields = new java.util.HashMap<>();
+        fields.put("total", coupon.getTotalStock());
+        fields.put("remain", coupon.getRemainStock());
+        fields.put("version", 0);
+        fields.put("per_user_max", coupon.getPerUserMax());
+        fields.put("status", 1);
+        fields.put("start_time", String.valueOf(coupon.getStartTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()));
+        fields.put("end_time", String.valueOf(coupon.getEndTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()));
+        redisTemplate.opsForHash().putAll(key, fields);
     }
 
     private int extractInt(String plan, int defaultValue) {

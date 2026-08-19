@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import java.util.Map;
+import java.util.LinkedHashMap;
 
 @Slf4j
 @Component
@@ -44,6 +45,29 @@ public class DataAnalysisTools {
             }
             return "暂无活动数据";
         } catch (Exception e) { return "暂无活动数据"; }
+    }
+
+    /** 给 Copilot 提供可追溯的实时业务快照，而不是让模型凭经验编数据。 */
+    public Map<String, Object> snapshot() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            Integer orders = jdbc.queryForObject("SELECT COUNT(*) FROM t_order WHERE created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)", Integer.class);
+            Integer paid = jdbc.queryForObject("SELECT COUNT(*) FROM t_order WHERE status='PAID' AND created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)", Integer.class);
+            Integer users = jdbc.queryForObject("SELECT COUNT(*) FROM t_user", Integer.class);
+            Integer stock = jdbc.queryForObject("SELECT COALESCE(SUM(total_stock),0) FROM t_coupon", Integer.class);
+            Integer remain = jdbc.queryForObject("SELECT COALESCE(SUM(remain_stock),0) FROM t_coupon", Integer.class);
+            result.put("orders7d", orders == null ? 0 : orders);
+            result.put("paidOrders7d", paid == null ? 0 : paid);
+            result.put("paymentRate", orders == null || orders == 0 ? 0 : Math.round(paid * 1000.0 / orders) / 10.0);
+            result.put("registeredUsers", users == null ? 0 : users);
+            result.put("totalStock", stock == null ? 0 : stock);
+            result.put("remainingStock", remain == null ? 0 : remain);
+            result.put("sellThroughRate", stock == null || stock == 0 ? 0 : Math.round((stock - remain) * 1000.0 / stock) / 10.0);
+        } catch (Exception e) {
+            log.warn("读取 AI 运营快照失败", e);
+            result.put("status", "DATA_UNAVAILABLE");
+        }
+        return result;
     }
 
     private int getInt(Map<String, Object> args, String key, int def) {
