@@ -8,8 +8,9 @@
 
 local couponKey = KEYS[1]
 local userSetKey = KEYS[2]
-local userId = ARGV[1]
-local currentTime = ARGV[2]
+-- RedisTemplate 的 JSON 序列化器会给字符串参数加引号，先还原为原始值。
+local userId = string.gsub(ARGV[1], '^"(.*)"$', '%1')
+local currentTime = string.gsub(ARGV[2], '^"(.*)"$', '%1')
 
 -- 1. 活动时间校验（等长字符串比较等价于数值比较）
 local startTime = redis.call('HGET', couponKey, 'start_time')
