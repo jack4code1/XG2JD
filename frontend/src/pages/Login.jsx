@@ -24,7 +24,7 @@ export default function Login() {
         return
       }
 
-      const { data } = await client.post('/auth/login', { username: u, password: p })
+      const { data } = await client.post('/auth/login', { username: u, password: p, role: r })
       if (!data.accessToken) {
         sm('登录失败')
         return

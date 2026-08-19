@@ -70,6 +70,11 @@ public class AuthController {
             throw new IllegalArgumentException("用户名或密码错误");
         }
 
+        if (request.getRole() != null && !request.getRole().isBlank()
+                && !request.getRole().equalsIgnoreCase(user.getRole())) {
+            throw new IllegalArgumentException("账号类型不匹配，请选择正确的登录入口");
+        }
+
         // 更新最后登录时间
         user.setLastLoginAt(LocalDateTime.now());
         userRepository.save(user);
