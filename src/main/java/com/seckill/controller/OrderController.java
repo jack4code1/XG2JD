@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 订单管理接口
@@ -29,9 +30,22 @@ public class OrderController {
 
     /** 支付订单 */
     @PostMapping("/{orderNo}/pay")
-    public String pay(@PathVariable String orderNo) {
+    public Map<String, Object> pay(@PathVariable String orderNo) {
         requireOwner(orderNo);
-        return orderService.pay(orderNo) ? "ok" : "fail";
+        if (!orderService.pay(orderNo)) {
+            throw new IllegalArgumentException("订单当前状态不可支付");
+        }
+        return Map.of("success", true, "orderNo", orderNo, "status", "PAYING", "message", "已创建支付单");
+    }
+
+    /** 模拟第三方支付回调，生产环境应由支付网关异步调用。 */
+    @PostMapping("/{orderNo}/pay/confirm")
+    public Map<String, Object> confirmPayment(@PathVariable String orderNo) {
+        requireOwner(orderNo);
+        if (!orderService.paySuccess(orderNo)) {
+            throw new IllegalArgumentException("支付单已失效或订单不可确认");
+        }
+        return Map.of("success", true, "orderNo", orderNo, "status", "PAID", "message", "支付成功");
     }
 
     /** 取消订单 */
