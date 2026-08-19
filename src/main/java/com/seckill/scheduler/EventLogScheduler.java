@@ -4,6 +4,7 @@ import com.seckill.model.EventLog;
 import com.seckill.repository.EventLogRepository;
 import com.seckill.repository.OrderRepository;
 import com.seckill.repository.CouponRepository;
+import com.seckill.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -35,6 +36,7 @@ public class EventLogScheduler {
     private final RabbitTemplate rabbitTemplate;
     private final CouponRepository couponRepository;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final ProductRepository productRepository;
 
     @Value("${seckill.order.expire-minutes:15}")
     private int orderExpireMinutes;
@@ -93,11 +95,14 @@ public class EventLogScheduler {
         List<com.seckill.model.Order> orders = orderRepository
                 .findByStatusAndCreatedAtBefore("CREATED", expireTime);
         for (com.seckill.model.Order order : orders) {
+            if (!"PRODUCT_PURCHASE".equals(order.getOrderType())) continue;
             order.setStatus("EXPIRED");
             orderRepository.save(order);
-            if (couponRepository.incrementRemainStock(order.getCouponId()) == 1) {
+            if ("COUPON_CLAIM".equals(order.getOrderType()) && couponRepository.incrementRemainStock(order.getCouponId()) == 1) {
                 redisTemplate.opsForHash().increment(
                         "seckill:coupon:" + order.getCouponId(), "remain", 1);
+            } else if ("PRODUCT_PURCHASE".equals(order.getOrderType()) && order.getProductId() != null) {
+                productRepository.incrementRemainStock(order.getProductId());
             }
         }
         int count = orders.size();

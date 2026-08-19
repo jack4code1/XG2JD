@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS t_coupon (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     coupon_name VARCHAR(128) NOT NULL,
     coupon_desc VARCHAR(512),
+    discount_amount DECIMAL(10,2) DEFAULT 0,
     total_stock INT NOT NULL,
     remain_stock INT NOT NULL,
     start_time DATETIME NOT NULL,
@@ -32,14 +33,32 @@ CREATE TABLE IF NOT EXISTS t_coupon (
     INDEX idx_status_time (status, start_time, end_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 商品表：商品需要支付，优惠券只在商品结算时抵扣
+CREATE TABLE IF NOT EXISTS t_product (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    merchant_id BIGINT NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    description VARCHAR(512),
+    price DECIMAL(10,2) NOT NULL,
+    remain_stock INT NOT NULL DEFAULT 0,
+    status TINYINT NOT NULL DEFAULT 1,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_product_merchant (merchant_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- 订单表
 CREATE TABLE IF NOT EXISTS t_order (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     order_no VARCHAR(64) NOT NULL UNIQUE COMMENT '订单号',
     user_id BIGINT NOT NULL,
-    coupon_id BIGINT NOT NULL,
+    coupon_id BIGINT,
+    product_id BIGINT,
+    order_type VARCHAR(24) NOT NULL DEFAULT 'COUPON_CLAIM',
     status VARCHAR(16) NOT NULL DEFAULT 'CREATED' COMMENT 'CREATED/PAYING/PAID/USED/REFUNDING/REFUNDED/CANCELED/EXPIRED',
     amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+    original_amount DECIMAL(10,2),
+    discount_amount DECIMAL(10,2) DEFAULT 0,
     version INT NOT NULL DEFAULT 0 COMMENT '乐观锁版本号',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

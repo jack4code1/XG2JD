@@ -4,6 +4,7 @@ import com.seckill.model.OrderStatus;
 import com.seckill.repository.EventLogRepository;
 import com.seckill.repository.OrderRepository;
 import com.seckill.repository.CouponRepository;
+import com.seckill.repository.ProductRepository;
 import com.seckill.model.EventLog;
 import com.seckill.model.Order;
 import lombok.RequiredArgsConstructor;
@@ -33,12 +34,17 @@ public class OrderService {
     private final EventLogRepository eventLogRepository;
     private final CouponRepository couponRepository;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final ProductRepository productRepository;
 
     /**
      * 用户支付订单：CREATED → PAYING
      */
     @Transactional
     public boolean pay(String orderNo) {
+        Order order = find(orderNo);
+        if (!"PRODUCT_PURCHASE".equals(order.getOrderType())) {
+            throw new IllegalArgumentException("代金券领取不需要支付，请用于商品结算");
+        }
         return transition(orderNo, "CREATED", "PAYING");
     }
 
@@ -47,6 +53,10 @@ public class OrderService {
      */
     @Transactional
     public boolean paySuccess(String orderNo) {
+        Order order = find(orderNo);
+        if (!"PRODUCT_PURCHASE".equals(order.getOrderType())) {
+            throw new IllegalArgumentException("代金券领取不需要支付");
+        }
         return transition(orderNo, "PAYING", "PAID");
     }
 
@@ -126,15 +136,19 @@ public class OrderService {
     public void restoreStock(String orderNo) {
         Order order = orderRepository.findByOrderNo(orderNo)
                 .orElseThrow(() -> new IllegalArgumentException("订单不存在: " + orderNo));
-        if (couponRepository.incrementRemainStock(order.getCouponId()) != 1) {
-            throw new IllegalStateException("MySQL 库存回补失败: couponId=" + order.getCouponId());
+        if ("COUPON_CLAIM".equals(order.getOrderType())) {
+            if (couponRepository.incrementRemainStock(order.getCouponId()) != 1) {
+                throw new IllegalStateException("MySQL 券库存回补失败: couponId=" + order.getCouponId());
+            }
+            Long restored = redisTemplate.opsForHash().increment("seckill:coupon:" + order.getCouponId(), "remain", 1);
+            if (restored == null) throw new IllegalStateException("Redis 券库存回补失败: couponId=" + order.getCouponId());
+        } else if (order.getProductId() != null && productRepository.incrementRemainStock(order.getProductId()) != 1) {
+            throw new IllegalStateException("商品库存回补失败: productId=" + order.getProductId());
         }
-        Long restored = redisTemplate.opsForHash()
-                .increment("seckill:coupon:" + order.getCouponId(), "remain", 1);
-        if (restored == null) {
-            throw new IllegalStateException("Redis 库存回补失败: couponId=" + order.getCouponId());
-        }
-        log.info("订单库存已回补: orderNo={}, couponId={}, remain={}",
-                orderNo, order.getCouponId(), restored);
+        log.info("订单库存已回补: orderNo={}, type={}", orderNo, order.getOrderType());
+    }
+
+    private Order find(String orderNo) {
+        return orderRepository.findByOrderNo(orderNo).orElseThrow(() -> new IllegalArgumentException("订单不存在: " + orderNo));
     }
 }

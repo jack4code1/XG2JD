@@ -2,9 +2,11 @@ package com.seckill.controller;
 
 import com.seckill.model.Coupon;
 import com.seckill.model.Merchant;
+import com.seckill.model.Product;
 import com.seckill.exception.ForbiddenException;
 import com.seckill.repository.CouponRepository;
 import com.seckill.repository.MerchantRepository;
+import com.seckill.repository.ProductRepository;
 import com.seckill.util.UserContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -21,6 +23,7 @@ public class MerchantController {
     private final MerchantRepository merchantRepository;
     private final CouponRepository couponRepository;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final ProductRepository productRepository;
 
     /** 商家列表（美团风格） */
     @GetMapping("/list")
@@ -47,6 +50,7 @@ public class MerchantController {
             map.put("category", m.getCategory());
             map.put("couponCount", coupons.size());
             map.put("coupons", coupons);
+            map.put("products", productRepository.findByMerchantIdAndStatusOrderByCreatedAtDesc(m.getId(), 1));
             return map;
     }
 

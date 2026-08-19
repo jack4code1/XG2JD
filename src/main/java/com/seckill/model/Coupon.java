@@ -6,6 +6,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
 
 @Entity
 @Table(name = "t_coupon")
@@ -24,6 +25,9 @@ public class Coupon {
 
     @Column(name = "coupon_desc", length = 512)
     private String couponDesc;
+
+    @Column(name = "discount_amount", precision = 10, scale = 2)
+    private BigDecimal discountAmount;
 
     @Column(name = "merchant_id")
     private Long merchantId;

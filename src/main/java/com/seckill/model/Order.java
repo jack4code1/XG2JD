@@ -26,8 +26,20 @@ public class Order {
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
-    @Column(name = "coupon_id", nullable = false)
+    @Column(name = "coupon_id")
     private Long couponId;
+
+    @Column(name = "product_id")
+    private Long productId;
+
+    @Column(name = "order_type", length = 24)
+    private String orderType;
+
+    @Column(name = "original_amount", precision = 10, scale = 2)
+    private BigDecimal originalAmount;
+
+    @Column(name = "discount_amount", precision = 10, scale = 2)
+    private BigDecimal discountAmount;
 
     @Column(nullable = false, length = 16)
     private String status; // CREATED/PAYING/PAID/USED/REFUNDING/REFUNDED/CANCELED/EXPIRED
@@ -49,6 +61,9 @@ public class Order {
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
+        if (orderType == null) orderType = "COUPON_CLAIM";
+        if (originalAmount == null) originalAmount = amount;
+        if (discountAmount == null) discountAmount = BigDecimal.ZERO;
     }
 
     @PreUpdate

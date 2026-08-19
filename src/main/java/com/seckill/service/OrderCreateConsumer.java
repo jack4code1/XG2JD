@@ -50,6 +50,7 @@ public class OrderCreateConsumer {
         order.setOrderNo(message.getOrderNo());
         order.setUserId(message.getUserId());
         order.setCouponId(message.getCouponId());
+        order.setOrderType("COUPON_CLAIM");
         order.setStatus("CREATED");
         order.setAmount(message.getAmount() != null ? message.getAmount() : java.math.BigDecimal.ZERO);
         order.setVersion(0);

@@ -44,7 +44,7 @@ function AppShell() {
       <main className="shell">
         {!isLogin && page !== 'login' ? <Login /> :
          page === 'login' ? <Login /> :
-         page === 'shop' ? <Shop shopId={shopId} onBack={() => { setPage('home'); setShopId(null) }} /> :
+         page === 'shop' ? <Shop shopId={shopId} onBack={() => { setPage('home'); setShopId(null) }} onOrders={() => setPage('orders')} /> :
          page === 'orders' ? <Orders /> :
          page === 'admin' ? <Admin /> :
          page === 'ai' ? <AIPage /> :
