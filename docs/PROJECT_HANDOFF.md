@@ -121,6 +121,7 @@ Bloom Filter 只用于减少重复请求的精确查询，Redis Set 是最终判
 - 消费者使用订单号幂等。
 - 订单状态事件使用 `event_log` 本地消息表和指数退避重试。
 - RabbitMQ 队列配置死信交换机。
+- 自定义 `rabbitListenerContainerFactory` 必须通过 `SimpleRabbitListenerContainerFactoryConfigurer` 初始化，否则 `spring.rabbitmq.listener.simple.*` 的并发和 prefetch 配置不会生效。2026-08-20 JMeter 实验已发现并修复该问题。
 
 当前边界：初始秒杀消息已经有发布确认和结果轮询，但还没有把“Redis 扣减 + 初始消息”彻底合并为完整 Outbox 事务。生产环境需要进一步增加 Redis pending 记录或专用 Outbox 补偿任务，处理进程在 Redis 扣减后立即崩溃的极端窗口。
 
@@ -205,7 +206,16 @@ seckill.caffeine.hit.rate
 
 ## 10. 压测和验收
 
-最新实测报告见 `docs/BENCHMARK_REPORT.md`，原始 JSON 位于 `docs/benchmark-results-2026-08-19*.json`，可复现脚本为 `scripts/benchmark_matrix.py`。
+最新实测报告见 `docs/BENCHMARK_REPORT.md`。JMeter 脱敏汇总位于 `docs/jmeter-results-2026-08-20.json`，测试计划为 `scripts/jmeter/seckill-load.jmx`，夹具与结果汇总工具为 `scripts/jmeter_benchmark.py`。历史 Python 原始 JSON 位于 `docs/benchmark-results-2026-08-19*.json`，脚本为 `scripts/benchmark_matrix.py`。
+
+2026-08-20 JMeter 5.6.3 单机实测摘要：
+
+- 200 并发、200 req/s 持续 10 分钟，共 120,000 请求：HTTP 与业务成功率 100%，P50 48 ms、P95 77 ms、P99 104 ms，0 重复订单号。
+- MQ 清空后，30 个活动的 MySQL 订单数和唯一订单号均为 120,000，Redis 库存全部为 0，死信队列为 0。
+- 库存 100、200 并发、1,000 请求：仅成功 100；同一用户 100 并发、100 请求：仅成功 1。
+- 容量上探以“业务成功率 100% 且 P99 < 2 秒”为标准，最高稳定验证并发为 200；400 并发出现 30 次连接拒绝，800 并发错误率 4.95%。
+- 稳定性测试暴露自定义监听器工厂未应用 Boot 消费参数：修复前实际仅 1 个消费者、恢复约 26.4 orders/s；修复后运行时 20–40 消费者的峰值恢复约 117.8 orders/s。
+- 稳定性实验的 199.89 req/s 是受控输入速率，不是系统最大 QPS；容量实验与 JMeter、应用、中间件同机，不能外推为生产集群能力。
 
 2026-08-19 单机实测摘要：
 
@@ -220,6 +230,15 @@ seckill.caffeine.hit.rate
 ```bash
 python3 scripts/bench_pure.py <couponId> <并发数> <请求数>
 ```
+
+JMeter 复现入口：
+
+```powershell
+python scripts/jmeter_benchmark.py prepare-suite --users 4000 --output target/jmeter-data
+jmeter -n -t scripts/jmeter/seckill-load.jmx -Jdata_file=<csv> -Jthreads=200 -Jloops=600
+```
+
+JTL 会包含临时 Token，只能保存在 Git 已忽略的 `target/`，不得直接提交；仓库只保留脱敏 JSON 汇总。
 
 脚本输出成功数、Redis 剩余库存、P50/P99、重复订单号和 PASS/FAIL。验收标准：
 

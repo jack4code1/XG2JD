@@ -1,0 +1,148 @@
+{
+  "test_date": "2026-08-20",
+  "tool": "Apache JMeter 5.6.3 CLI",
+  "environment": {
+    "cpu": "Intel Core i7-12650H, 10 cores / 16 threads",
+    "memory_gb": 15.8,
+    "os": "Windows 11 Pro 10.0.26200",
+    "jvm": "Eclipse Temurin 17.0.20",
+    "deployment": "single Spring Boot instance; JMeter and Docker middleware on the same host"
+  },
+  "acceptance_matrix": [
+    {
+      "concurrency": 50,
+      "requests": 1200,
+      "business_success": 1200,
+      "throughput_rps": 206.75,
+      "p50_ms": 60.0,
+      "p95_ms": 92.0,
+      "p99_ms": 107.0,
+      "duplicate_order_numbers": 0
+    },
+    {
+      "concurrency": 100,
+      "requests": 1200,
+      "business_success": 1200,
+      "throughput_rps": 229.14,
+      "p50_ms": 72.0,
+      "p95_ms": 145.0,
+      "p99_ms": 152.0,
+      "duplicate_order_numbers": 0
+    },
+    {
+      "concurrency": 200,
+      "requests": 1200,
+      "business_success": 1200,
+      "throughput_rps": 240.96,
+      "p50_ms": 129.0,
+      "p95_ms": 318.0,
+      "p99_ms": 356.0,
+      "duplicate_order_numbers": 0
+    },
+    {
+      "concurrency": 400,
+      "requests": 1200,
+      "business_success": 1200,
+      "throughput_rps": 243.36,
+      "p50_ms": 290.0,
+      "p95_ms": 818.0,
+      "p99_ms": 945.0,
+      "duplicate_order_numbers": 0
+    }
+  ],
+  "ten_minute_stability": {
+    "concurrency": 200,
+    "target_rps": 200,
+    "duration_s": 600.333,
+    "requests": 120000,
+    "http_success": 120000,
+    "business_success": 120000,
+    "throughput_rps": 199.89,
+    "latency_avg_ms": 52.44,
+    "p50_ms": 48.0,
+    "p95_ms": 77.0,
+    "p99_ms": 104.0,
+    "max_ms": 400.0,
+    "unique_order_numbers": 120000,
+    "duplicate_order_numbers": 0,
+    "mysql_orders_after_queue_drained": 120000,
+    "mysql_distinct_order_numbers": 120000,
+    "redis_final_stock_consistent": true,
+    "dead_letter_messages": 0
+  },
+  "stock_exhaustion": {
+    "concurrency": 200,
+    "requests": 1000,
+    "initial_stock": 100,
+    "business_success": 100,
+    "sold_out_responses": 900,
+    "redis_remain": 0,
+    "duplicate_order_numbers": 0
+  },
+  "same_user_race": {
+    "concurrency": 100,
+    "requests": 100,
+    "business_success": 1,
+    "duplicate_rejections": 99,
+    "redis_remain": 99,
+    "duplicate_order_numbers": 0
+  },
+  "mq_backlog": {
+    "observation": "The custom listener factory did not apply spring.rabbitmq.listener.simple settings.",
+    "before_fix": {
+      "effective_consumers": 1,
+      "effective_prefetch": 250,
+      "ready_after_stability_test": 84217,
+      "unacknowledged_after_stability_test": 250,
+      "observed_recovery_orders_per_second": 26.4
+    },
+    "fix": "Configure SimpleRabbitListenerContainerFactory through Spring Boot's SimpleRabbitListenerContainerFactoryConfigurer.",
+    "runtime_probe_after_fix": {
+      "consumer_range": "20-40",
+      "prefetch": 20,
+      "hikari_maximum_pool_size": 20,
+      "observed_peak_recovery_orders_per_second": 117.8,
+      "speedup_vs_before_fix": 4.46
+    }
+  },
+  "capacity_probe_under_concurrent_mq_consumption": [
+    {
+      "concurrency": 100,
+      "requests": 1000,
+      "business_success": 1000,
+      "throughput_rps": 206.27,
+      "p99_ms": 469.0,
+      "connection_errors": 0
+    },
+    {
+      "concurrency": 200,
+      "requests": 2000,
+      "business_success": 2000,
+      "throughput_rps": 263.09,
+      "p99_ms": 717.0,
+      "connection_errors": 0
+    },
+    {
+      "concurrency": 400,
+      "requests": 4000,
+      "business_success": 3970,
+      "throughput_rps": 340.31,
+      "p99_ms": 1213.0,
+      "connection_errors": 30
+    },
+    {
+      "concurrency": 800,
+      "requests": 8000,
+      "business_success": 7604,
+      "throughput_rps": 378.13,
+      "p99_ms": 2252.0,
+      "connection_errors": 396
+    }
+  ],
+  "capacity_conclusion": {
+    "criterion": "100% business success and P99 below 2000 ms",
+    "highest_stable_verified_concurrency": 200,
+    "saturation_started_at_concurrency": 400,
+    "failure_type": "TCP connection refused while the process remained alive; no Redis Lua business invariant failure"
+  }
+}

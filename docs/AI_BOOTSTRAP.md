@@ -92,6 +92,7 @@ cd frontend && npm run build
 
 - `README.md`
 - `docs/PROJECT_HANDOFF.md`
+- `docs/BENCHMARK_REPORT.md`（如改动秒杀、MQ、数据库写入或性能配置）
 - 语雀项目交接文档
 
 提交前检查 `git status --short`，只提交本次相关文件。用户明确要求时再执行 `git push origin main`。
@@ -102,3 +103,5 @@ cd frontend && npm run build
 - 支付为模拟流程。
 - AI 外部模型不可用时使用本地规则降级，评测需要区分真实模型和降级结果。
 - AI 执行任务的单实例幂等保护使用 `synchronized`；多实例部署前需改为数据库条件更新或分布式锁。
+- 最新性能基线使用 Apache JMeter 5.6.3 CLI；测试计划为 `scripts/jmeter/seckill-load.jmx`，夹具与脱敏汇总脚本为 `scripts/jmeter_benchmark.py`。JTL 含临时 Token，只能保存在 `target/`，不得提交。
+- 2026-08-20 同机容量上探中，200 并发满足 100% 业务成功且 P99 < 2 秒，400 并发开始出现连接拒绝。不要把受控 200 req/s 稳定性实验描述成系统最大吞吐。

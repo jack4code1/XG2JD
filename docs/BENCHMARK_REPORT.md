@@ -112,10 +112,100 @@ MySQL DISTINCT order_no                           = 7,324
 
 三者完全一致；检查时 `order.create.queue`、`dead.letter.queue` 的 ready/unacknowledged 均为 0。
 
-## 9. 简历可使用的数据表述
+## 9. 2026-08-20 JMeter 补充实验
 
-建议使用持续实验而不是旧的瞬时峰值：
+补充实验使用 Apache JMeter 5.6.3 CLI（非 GUI 模式），测试计划为 `scripts/jmeter/seckill-load.jmx`，夹具和脱敏汇总工具为 `scripts/jmeter_benchmark.py`，汇总原始数据为 `docs/jmeter-results-2026-08-20.json`。
 
-> 使用独立用户和专用活动完成 10–200 并发矩阵及售罄竞争实验；200 并发、2,000 请求下吞吐 419.44 req/s、P99 491.31 ms、成功率 100%，累计 7,324 个成功订单未出现超卖、重复订单号或 MQ 落库缺失。
+JMeter、单实例 Spring Boot、MySQL、Redis 和 RabbitMQ 均运行在同一台机器。JMeter 只计时 `POST /api/seckill/execute`；账号登录、活动创建和数据准备均在计时前完成。每个成功请求使用对应活动下尚未参与过的用户，避免一人一单规则污染吞吐结果。
 
-面试时必须说明这是同机单实例本地实验，并能解释吞吐在 50 并发后进入平台期、延迟继续上升的原因。
+### 9.1 并发阶梯
+
+每档使用独立活动、1,200 个请求和 5 秒爬坡时间：
+
+| 并发数 | 请求数 | 业务成功 | 吞吐 | P50 | P95 | P99 | 重复订单号 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 50 | 1,200 | 1,200 | 206.75 req/s | 60 ms | 92 ms | 107 ms | 0 |
+| 100 | 1,200 | 1,200 | 229.14 req/s | 72 ms | 145 ms | 152 ms | 0 |
+| 200 | 1,200 | 1,200 | 240.96 req/s | 129 ms | 318 ms | 356 ms | 0 |
+| 400 | 1,200 | 1,200 | 243.36 req/s | 290 ms | 818 ms | 945 ms | 0 |
+
+该表的吞吐包含爬坡阶段，不能解释为容量上限。400 并发的稳态发送窗口曾达到约 412 req/s，但报告保留包含爬坡的全程统计。
+
+### 9.2 10 分钟稳定性
+
+配置：200 并发、Constant Throughput Timer 限制 200 req/s、持续 600 秒，共 120,000 个请求。
+
+| 请求数 | HTTP/业务成功 | 实际吞吐 | 平均 RT | P50 | P95 | P99 | 最大 RT |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 120,000 | 120,000 / 120,000 | 199.89 req/s | 52.44 ms | 48 ms | 77 ms | 104 ms | 400 ms |
+
+- 120,000 个订单号全部唯一。
+- 30 个活动的 Redis 最终库存全部为 0。
+- MQ 清空后 MySQL 订单数和唯一订单号均为 120,000。
+- 死信队列为 0。
+
+这是受控速率稳定性实验，不代表系统最大吞吐。它验证的是系统能否在 200 req/s 输入下持续 10 分钟稳定受理，以及异步链路最终能否完整落库。
+
+### 9.3 售罄与同用户竞争
+
+- 库存 100、200 并发、1,000 请求：成功 100，售罄返回 900，Redis 库存 0，重复订单号 0。
+- 同一用户、100 并发、100 请求：成功 1，重复参与拒绝 99，Redis 库存 99，重复订单号 0。
+
+## 10. MQ 积压发现与修复
+
+10 分钟实验结束 5 秒后，Redis 已受理 120,000 个请求，但 MySQL 当时仅落库约 35,403 条，`order.create.queue` 仍有 84,217 条 ready、250 条 unacknowledged。
+
+排查发现项目自定义的 `rabbitListenerContainerFactory` 只设置了连接工厂和 JSON Converter，没有使用 Spring Boot 的 `SimpleRabbitListenerContainerFactoryConfigurer`，因此 `application.yml` 中的消费者并发与 prefetch 配置被静默忽略；实际只有 1 个消费者、prefetch 为框架默认值 250。
+
+修复后，配置文件中的 `spring.rabbitmq.listener.simple.*` 能正确应用。运行时使用 20–40 消费者、prefetch 20 进行恢复探测：
+
+- 修复前自然恢复约 26.4 orders/s。
+- 修复后峰值恢复约 117.8 orders/s，约为修复前的 4.46 倍。
+- 随订单表和事件表增长，落库速度会受数据库连接池、索引维护和单条事务写入影响；继续扩大消费者并不等价于线性提升。
+- 队列最终清空后，稳定性实验 120,000 条订单全部落库且订单号唯一。
+
+## 11. 容量上探
+
+容量上探在修复后的监听器工厂下执行，并使用较高的运行时消费参数（60–80 消费者、Hikari 最大连接数 50），因此测试包含 MQ 消费和数据库落库对整机资源的竞争。
+
+每个线程执行 10 次请求，1 秒爬坡：
+
+| 并发数 | 请求数 | 业务成功 | 全程吞吐 | P99 | 连接失败 | 结论 |
+| ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 100 | 1,000 | 1,000 | 206.27 req/s | 469 ms | 0 | 通过 |
+| 200 | 2,000 | 2,000 | 263.09 req/s | 717 ms | 0 | 通过 |
+| 400 | 4,000 | 3,970 | 340.31 req/s | 1,213 ms | 30 | 开始饱和 |
+| 800 | 8,000 | 7,604 | 378.13 req/s | 2,252 ms | 396 | 不通过 |
+
+按“业务成功率 100% 且 P99 < 2 秒”的标准，最高稳定验证并发为 200；400 并发开始出现连接拒绝，800 并发错误率 4.95%。失败请求均为 TCP 连接建立失败，后端进程在测试后仍存活，未发现 Redis Lua 导致的超卖或重复订单。该结果表示当前同机部署下的连接/整机容量边界，不应外推为多机生产容量。
+
+## 12. 复现命令
+
+准备正式测试夹具：
+
+```powershell
+python scripts/jmeter_benchmark.py prepare-suite `
+  --users 4000 --stability-seconds 600 --stability-rps 200 `
+  --output target/jmeter-data
+```
+
+执行 200 并发稳定性测试：
+
+```powershell
+jmeter -n -t scripts/jmeter/seckill-load.jmx `
+  -l target/jmeter-results/stability.jtl `
+  -Jdata_file=target/jmeter-data/stability.csv `
+  -Jthreads=200 -Jloops=600 -Jramp_seconds=5 `
+  -Jthroughput_per_minute=12000 `
+  "-Jsample_variables=business_success,order_no,business_message,username,token,coupon_id"
+```
+
+JTL 包含临时访问 Token，只能保存在已忽略的 `target/` 目录。提交到仓库的是由 `summarize` 子命令生成的脱敏汇总，不包含账号凭据。
+
+## 13. 简历可使用的数据表述
+
+建议优先使用稳定性实验，不把受控 200 req/s 写成系统最大吞吐：
+
+> 使用 JMeter 完成 200 并发、10 分钟稳定性测试，累计受理 12 万次秒杀请求，吞吐稳定在 199.89 req/s、P99 104 ms、成功率 100%；所有订单最终完整落库，未出现超卖、重复订单或死信消息。
+
+面试时应主动说明这是同机单实例实验；完整秒杀受理链路包含 Redis Lua 和 RabbitMQ publisher confirm，并非单独执行 Redis Lua。容量上探中 400 并发开始出现连接拒绝，当前最高稳定验证并发为 200。

@@ -8,6 +8,7 @@ target/
 logs/
 *.err
 *.pid
+__pycache__/
 
 # 敏感配置
 application-local.yml

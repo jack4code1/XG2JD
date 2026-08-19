@@ -6,6 +6,7 @@ import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.listener.RabbitListenerContainerFactory;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.springframework.boot.autoconfigure.amqp.SimpleRabbitListenerContainerFactoryConfigurer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -85,9 +86,14 @@ public class RabbitMQConfig {
 
     @Bean
     public RabbitListenerContainerFactory<?> rabbitListenerContainerFactory(
-            ConnectionFactory connectionFactory, Jackson2JsonMessageConverter converter) {
+            SimpleRabbitListenerContainerFactoryConfigurer configurer,
+            ConnectionFactory connectionFactory,
+            Jackson2JsonMessageConverter converter) {
         SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
-        factory.setConnectionFactory(connectionFactory);
+        // Apply spring.rabbitmq.listener.simple.* before overriding project-specific settings.
+        // Without the Boot configurer the custom factory silently falls back to one consumer
+        // and the framework default prefetch, ignoring application.yml concurrency controls.
+        configurer.configure(factory, connectionFactory);
         factory.setMessageConverter(converter);
         factory.setDefaultRequeueRejected(false); // 转换失败不进死循环
         return factory;
