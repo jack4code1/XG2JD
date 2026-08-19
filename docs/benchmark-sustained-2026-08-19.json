@@ -1,0 +1,102 @@
+{
+  "run_id": "20260819235323",
+  "timestamp": "2026-08-19T23:53:51",
+  "base_url": "http://127.0.0.1:8080",
+  "requests_per_level": 2000,
+  "concurrency_levels": [
+    200
+  ],
+  "warmup": {
+    "concurrency": 10,
+    "requests": 30,
+    "success": 30,
+    "failed": 0,
+    "success_rate_pct": 100.0,
+    "duration_s": 0.1413,
+    "throughput_rps": 212.34,
+    "latency_avg_ms": 44.82,
+    "latency_p50_ms": 44.84,
+    "latency_p95_ms": 48.98,
+    "latency_p99_ms": 49.13,
+    "latency_max_ms": 49.13,
+    "unique_order_numbers": 30,
+    "duplicate_order_numbers": 0,
+    "errors": {},
+    "orders_visible_in_mysql": 30,
+    "orders_missing_after_timeout": 0
+  },
+  "throughput_matrix": [
+    {
+      "concurrency": 200,
+      "requests": 2000,
+      "success": 2000,
+      "failed": 0,
+      "success_rate_pct": 100.0,
+      "duration_s": 4.7683,
+      "throughput_rps": 419.44,
+      "latency_avg_ms": 459.05,
+      "latency_p50_ms": 462.84,
+      "latency_p95_ms": 486.92,
+      "latency_p99_ms": 491.31,
+      "latency_max_ms": 504.07,
+      "unique_order_numbers": 2000,
+      "duplicate_order_numbers": 0,
+      "errors": {},
+      "orders_visible_in_mysql": 2000,
+      "orders_missing_after_timeout": 0,
+      "coupon_id": 28,
+      "redis_remain_after": 0,
+      "stock_expected_after": 0,
+      "stock_consistent": true
+    }
+  ],
+  "stock_exhaustion": {
+    "concurrency": 100,
+    "requests": 300,
+    "success": 100,
+    "failed": 200,
+    "success_rate_pct": 33.33,
+    "duration_s": 0.716,
+    "throughput_rps": 418.99,
+    "latency_avg_ms": 203.14,
+    "latency_p50_ms": 215.84,
+    "latency_p95_ms": 227.6,
+    "latency_p99_ms": 230.07,
+    "latency_max_ms": 241.62,
+    "unique_order_numbers": 100,
+    "duplicate_order_numbers": 0,
+    "errors": {
+      "优惠券已抢光": 200
+    },
+    "orders_visible_in_mysql": 100,
+    "orders_missing_after_timeout": 0,
+    "coupon_id": 29,
+    "initial_stock": 100,
+    "redis_remain_after": 0,
+    "no_oversell": true
+  },
+  "same_user_race": {
+    "concurrency": 50,
+    "requests": 100,
+    "success": 1,
+    "failed": 99,
+    "success_rate_pct": 1.0,
+    "duration_s": 0.2373,
+    "throughput_rps": 421.34,
+    "latency_avg_ms": 97.39,
+    "latency_p50_ms": 99.43,
+    "latency_p95_ms": 107.1,
+    "latency_p99_ms": 124.73,
+    "latency_max_ms": 127.3,
+    "unique_order_numbers": 1,
+    "duplicate_order_numbers": 0,
+    "errors": {
+      "您已参与过本次活动": 99
+    },
+    "orders_visible_in_mysql": 1,
+    "orders_missing_after_timeout": 0,
+    "coupon_id": 30,
+    "redis_remain_after": 99,
+    "one_user_one_order": true
+  }
+}

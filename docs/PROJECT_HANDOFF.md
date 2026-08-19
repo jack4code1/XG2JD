@@ -205,6 +205,16 @@ seckill.caffeine.hit.rate
 
 ## 10. 压测和验收
 
+最新实测报告见 `docs/BENCHMARK_REPORT.md`，原始 JSON 位于 `docs/benchmark-results-2026-08-19*.json`，可复现脚本为 `scripts/benchmark_matrix.py`。
+
+2026-08-19 单机实测摘要：
+
+- 10/50/100/200 并发矩阵独立执行 3 轮，共 4,800 请求，成功率 100%，0 重复订单、0 MQ 落库缺失。
+- 200 并发、2,000 请求持续实验：419.44 req/s，P50 462.84 ms，P99 491.31 ms。
+- 库存 100、300 请求售罄实验执行 4 轮，每轮仅成功 100，最终库存 0。
+- 同一用户 50 并发、100 请求执行 4 轮，每轮仅成功 1，最终库存 99。
+- 全部实验的 Prometheus 成功计数、MySQL 订单数和唯一订单号数量均为 7,324。
+
 准备 `/tmp/seckill_tokens.txt` 后执行：
 
 ```bash
