@@ -31,8 +31,8 @@ public class AuthInterceptor implements HandlerInterceptor {
             return true;
         }
 
-        // 放行AI接口
-        if (path.contains("/api/ai/")) {
+        // 仅放行 AI 健康检查，策划和执行接口必须登录并由控制器校验商家角色。
+        if (path.equals("/api/ai/health")) {
             return true;
         }
 

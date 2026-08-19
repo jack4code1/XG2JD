@@ -3,11 +3,13 @@ package com.seckill.service;
 import com.seckill.model.OrderStatus;
 import com.seckill.repository.EventLogRepository;
 import com.seckill.repository.OrderRepository;
+import com.seckill.repository.CouponRepository;
 import com.seckill.model.EventLog;
 import com.seckill.model.Order;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -29,6 +31,8 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final EventLogRepository eventLogRepository;
+    private final CouponRepository couponRepository;
+    private final RedisTemplate<String, Object> redisTemplate;
 
     /**
      * 用户支付订单：CREATED → PAYING
@@ -51,7 +55,9 @@ public class OrderService {
      */
     @Transactional
     public boolean cancel(String orderNo) {
-        return transition(orderNo, "CREATED", "CANCELED");
+        boolean changed = transition(orderNo, "CREATED", "CANCELED");
+        if (changed) restoreStock(orderNo);
+        return changed;
     }
 
     /**
@@ -114,5 +120,21 @@ public class OrderService {
 
         log.info("订单状态转移: orderNo={}, {}→{}", orderNo, expectedStatus, targetStatus);
         return true;
+    }
+
+    @Transactional
+    public void restoreStock(String orderNo) {
+        Order order = orderRepository.findByOrderNo(orderNo)
+                .orElseThrow(() -> new IllegalArgumentException("订单不存在: " + orderNo));
+        if (couponRepository.incrementRemainStock(order.getCouponId()) != 1) {
+            throw new IllegalStateException("MySQL 库存回补失败: couponId=" + order.getCouponId());
+        }
+        Long restored = redisTemplate.opsForHash()
+                .increment("seckill:coupon:" + order.getCouponId(), "remain", 1);
+        if (restored == null) {
+            throw new IllegalStateException("Redis 库存回补失败: couponId=" + order.getCouponId());
+        }
+        log.info("订单库存已回补: orderNo={}, couponId={}, remain={}",
+                orderNo, order.getCouponId(), restored);
     }
 }

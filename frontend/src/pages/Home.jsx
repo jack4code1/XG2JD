@@ -2,33 +2,16 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../AuthContext'
 import client from '../api/client'
 
-const ICONS = { '餐饮':'🍔','服饰':'👗','数码':'📱','美妆':'💄','其他':'🛒' }
+const ICONS = { 餐饮:'🍜', 服饰:'👜', 数码:'🎧', 美妆:'💄', 其他:'🎁' }
+const TABS = ['推荐', '今日上新', '餐饮', '数码', '美妆', '服饰']
 
 export default function Home({ onShopClick }) {
-  const { isLogin } = useAuth()
-  const [list, setList] = useState([])
-  useEffect(()=>{ isLogin && client.get('/merchant/list').then(({data})=>setList(Array.isArray(data)?data:[])).catch(()=>{}) },[isLogin])
-
-  return (
-    <div>
-      <div style={{ background:'linear-gradient(135deg,#6366f1,#8b5cf6)', borderRadius:20, padding:'48px 24px', textAlign:'center', marginBottom:32, color:'white' }}>
-        <h1 style={{ fontSize:36, fontWeight:800, margin:0 }}>🔥 限时秒杀</h1>
-        <p style={{ fontSize:16, opacity:.85, marginTop:8 }}>精选商家 · 超值优惠券 · 手慢无</p>
-      </div>
-      <h2 style={{ fontSize:22, fontWeight:700, marginBottom:20, color:'#1f2937' }}>🏬 精选商家</h2>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(200px, 1fr))', gap:16 }}>
-        {list.map(m => (
-          <div key={m.id} onClick={()=>onShopClick(m.id)}
-            style={{ background:'white', borderRadius:16, padding:24, textAlign:'center', cursor:'pointer', boxShadow:'0 2px 12px rgba(0,0,0,0.06)', transition:'all .2s' }}
-            onMouseEnter={e=>e.currentTarget.style.transform='translateY(-2px)'}
-            onMouseLeave={e=>e.currentTarget.style.transform='none'}>
-            <div style={{ fontSize:48, marginBottom:12 }}>{ICONS[m.category]||'🛒'}</div>
-            <div style={{ fontSize:15, fontWeight:700, color:'#1f2937' }}>{m.shopName}</div>
-            <div style={{ display:'inline-block', background:'#eef2ff', color:'#6366f1', padding:'2px 10px', borderRadius:20, fontSize:12, margin:'6px 0' }}>{m.category||'其他'}</div>
-            <div style={{ fontSize:13, color:'#9ca3af', marginTop:4 }}>{m.couponCount} 张优惠券</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
+  const { isLogin } = useAuth(); const [list, setList] = useState([]); const [tab, setTab] = useState('推荐')
+  useEffect(() => { isLogin && client.get('/merchant/list').then(({data})=>setList(Array.isArray(data)?data:[])).catch(()=>{}) }, [isLogin])
+  const filtered = list.filter(m => tab === '推荐' || tab === '今日上新' || m.category === tab)
+  return <>
+    <section className="hero-panel"><div className="hero-copy"><div className="eyebrow">SECKILL DAILY · 08.19</div><h1>今天，<br/>抢点好的。</h1><p>精选好店限时放券，先到先得，把心动带回家。</p><div className="hero-stats"><div className="hero-stat"><strong>{list.length || '—'}</strong><span>正在营业的店铺</span></div><div className="hero-stat"><strong>100%</strong><span>限时真实库存</span></div></div></div></section>
+    <div className="section-head"><div><h2>发现好券</h2><div className="muted">每天都有新惊喜</div></div><div className="filters">{TABS.map(x=><button className={'filter ' + (tab===x?'active':'')} key={x} onClick={()=>setTab(x)}>{x}</button>)}</div></div>
+    {filtered.length ? <div className="feed">{filtered.map((m, i) => <article className="note-card" key={m.id} onClick={()=>onShopClick(m.id)}><div className={'note-art art-' + ({餐饮:'food',服饰:'fashion',数码:'tech',美妆:'beauty'}[m.category]||'other')}><span>{ICONS[m.category]||ICONS.其他}</span><span className="note-badge">限时放券</span></div><div className="note-body"><h3 className="note-title">{m.shopName} · {m.couponCount || 0} 张好券等你来抢</h3><div className="note-meta"><span>{m.category || '精选好店'}　·　今日推荐</span><span>♡ {18 + i * 7}</span></div></div></article>)}</div> : <div className="empty">还没有店铺内容，去商家端创建第一张优惠券吧</div>}
+  </>
 }

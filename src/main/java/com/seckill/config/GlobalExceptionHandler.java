@@ -1,6 +1,7 @@
 package com.seckill.config;
 
 import com.seckill.dto.SeckillResponse;
+import com.seckill.exception.ForbiddenException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -21,6 +22,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public SeckillResponse handleIllegalArgument(IllegalArgumentException e) {
+        return SeckillResponse.fail(e.getMessage());
+    }
+
+    @ExceptionHandler(ForbiddenException.class)
+    @ResponseStatus(HttpStatus.FORBIDDEN)
+    public SeckillResponse handleForbidden(ForbiddenException e) {
         return SeckillResponse.fail(e.getMessage());
     }
 }

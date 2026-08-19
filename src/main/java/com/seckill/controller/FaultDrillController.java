@@ -5,6 +5,8 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
 import java.util.Map;
+import com.seckill.exception.ForbiddenException;
+import com.seckill.util.UserContext;
 
 /**
  * 故障演练接口
@@ -27,6 +29,7 @@ public class FaultDrillController {
      */
     @PostMapping("/start")
     public Map<String, Object> startDrill(@RequestParam String scenario) {
+        requireMerchant();
         currentScenario = scenario;
         injectTime = Instant.now().toEpochMilli();
         log.warn("=== 故障演练开始: scenario={}, time={} ===", scenario, injectTime);
@@ -42,6 +45,7 @@ public class FaultDrillController {
      */
     @PostMapping("/recover")
     public Map<String, Object> recoverDrill() {
+        requireMerchant();
         long recoverTime = Instant.now().toEpochMilli();
         long durationMs = recoverTime - injectTime;
 
@@ -68,11 +72,18 @@ public class FaultDrillController {
      */
     @GetMapping("/status")
     public Map<String, Object> status() {
+        requireMerchant();
         return Map.of(
             "scenario", currentScenario,
             "injectTime", injectTime,
             "elapsedMs", currentScenario.equals("none") ? 0 :
                     Instant.now().toEpochMilli() - injectTime
         );
+    }
+
+    private void requireMerchant() {
+        if (!"MERCHANT".equals(UserContext.getRole())) {
+            throw new ForbiddenException("只有商家可以进行故障演练");
+        }
     }
 }

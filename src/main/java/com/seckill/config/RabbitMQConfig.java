@@ -15,6 +15,7 @@ public class RabbitMQConfig {
     public static final String ORDER_CREATE_QUEUE = "order.create.queue";
     public static final String ORDER_CREATE_EXCHANGE = "order.exchange";
     public static final String ORDER_CREATE_KEY = "order.create";
+    public static final String ORDER_EVENT_EXCHANGE = "order.event";
 
     public static final String CACHE_SYNC_QUEUE = "cache.sync.queue";
     public static final String CACHE_SYNC_EXCHANGE = "cache.sync";
@@ -40,6 +41,11 @@ public class RabbitMQConfig {
     @Bean
     public Binding orderBinding() {
         return BindingBuilder.bind(orderCreateQueue()).to(orderExchange()).with(ORDER_CREATE_KEY);
+    }
+
+    @Bean
+    public TopicExchange orderEventExchange() {
+        return new TopicExchange(ORDER_EVENT_EXCHANGE);
     }
 
     @Bean

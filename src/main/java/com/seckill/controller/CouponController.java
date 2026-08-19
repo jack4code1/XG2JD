@@ -1,7 +1,10 @@
 package com.seckill.controller;
 
 import com.seckill.model.Coupon;
+import com.seckill.exception.ForbiddenException;
 import com.seckill.repository.CouponRepository;
+import com.seckill.repository.MerchantRepository;
+import com.seckill.util.UserContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.*;
@@ -21,6 +24,7 @@ import java.util.Map;
 public class CouponController {
 
     private final CouponRepository couponRepository;
+    private final MerchantRepository merchantRepository;
     private final RedisTemplate<String, Object> redisTemplate;
 
     /**
@@ -28,6 +32,9 @@ public class CouponController {
      */
     @PostMapping("/create")
     public Coupon create(@RequestBody Coupon coupon) {
+        requireMerchant();
+        coupon.setMerchantId(merchantRepository.findByUserId(UserContext.getUserId())
+                .orElseThrow(() -> new IllegalArgumentException("商家店铺不存在")).getId());
         coupon.setRemainStock(coupon.getTotalStock());
         coupon.setStatus(1);
         Coupon saved = couponRepository.save(coupon);
@@ -56,5 +63,11 @@ public class CouponController {
     @GetMapping("/active")
     public List<Coupon> listActive() {
         return couponRepository.findByStatus(1);
+    }
+
+    private void requireMerchant() {
+        if (!"MERCHANT".equals(UserContext.getRole())) {
+            throw new ForbiddenException("只有商家可以创建优惠券");
+        }
     }
 }

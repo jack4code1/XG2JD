@@ -6,6 +6,7 @@ import com.seckill.model.EventLog;
 import com.seckill.model.Order;
 import com.seckill.repository.EventLogRepository;
 import com.seckill.repository.OrderRepository;
+import com.seckill.repository.CouponRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -30,6 +31,7 @@ public class OrderCreateConsumer {
 
     private final OrderRepository orderRepository;
     private final EventLogRepository eventLogRepository;
+    private final CouponRepository couponRepository;
 
     @RabbitListener(queues = RabbitMQConfig.ORDER_CREATE_QUEUE)
     @Transactional(rollbackFor = Exception.class)
@@ -52,6 +54,11 @@ public class OrderCreateConsumer {
         order.setAmount(message.getAmount() != null ? message.getAmount() : java.math.BigDecimal.ZERO);
         order.setVersion(0);
         orderRepository.saveAndFlush(order);
+
+        // Redis 是秒杀实时库存，订单落库后同步 MySQL 展示库存，保证商家端和数据库最终一致。
+        if (couponRepository.decrementRemainStock(message.getCouponId()) != 1) {
+            throw new IllegalStateException("优惠券库存同步失败: couponId=" + message.getCouponId());
+        }
 
         // 3. 写入本地消息表
         EventLog eventLog = new EventLog();

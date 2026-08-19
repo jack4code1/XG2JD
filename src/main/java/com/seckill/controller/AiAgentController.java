@@ -2,6 +2,9 @@ package com.seckill.controller;
 
 import com.seckill.agent.AgentOrchestrator;
 import com.seckill.repository.CouponRepository;
+import com.seckill.repository.MerchantRepository;
+import com.seckill.exception.ForbiddenException;
+import com.seckill.util.UserContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.*;
@@ -22,6 +25,7 @@ public class AiAgentController {
 
     private final AgentOrchestrator orchestrator;
     private final CouponRepository couponRepository;
+    private final MerchantRepository merchantRepository;
     private final RedisTemplate<String, Object> redisTemplate;
 
     /**
@@ -29,6 +33,7 @@ public class AiAgentController {
      */
     @PostMapping("/campaign/plan")
     public Map<String, Object> planCampaign(@RequestBody Map<String, String> request) {
+        requireMerchant();
         String query = request.getOrDefault("query", "帮我策划一个秒杀活动");
         String plan = orchestrator.planCampaign(query);
 
@@ -45,6 +50,7 @@ public class AiAgentController {
      */
     @PostMapping("/campaign/execute")
     public Map<String, Object> executePlan(@RequestBody Map<String, String> request) {
+        requireMerchant();
         String query = request.getOrDefault("query", "帮我策划一个秒杀活动");
         // 先用 AI 出方案
         String plan = orchestrator.planCampaign(query);
@@ -54,6 +60,8 @@ public class AiAgentController {
             var now = new java.util.Date();
             var end = new java.util.Date(now.getTime() + 4 * 3600000);
             var coupon = new com.seckill.model.Coupon();
+            coupon.setMerchantId(merchantRepository.findByUserId(UserContext.getUserId())
+                    .orElseThrow(() -> new IllegalArgumentException("商家店铺不存在")).getId());
             coupon.setCouponName(extract(plan, "名称", query.contains("双11") ? "双11秒杀券" : "秒杀券"));
             coupon.setTotalStock(extractInt(plan, 500));
             coupon.setRemainStock(coupon.getTotalStock());
@@ -78,6 +86,12 @@ public class AiAgentController {
             return Map.of("success", true, "couponId", coupon.getId(), "couponName", coupon.getCouponName(), "plan", plan);
         } catch (Exception e) {
             return Map.of("success", false, "message", e.getMessage(), "plan", plan);
+        }
+    }
+
+    private void requireMerchant() {
+        if (!"MERCHANT".equals(UserContext.getRole())) {
+            throw new ForbiddenException("只有商家可以使用 AI 运营功能");
         }
     }
 

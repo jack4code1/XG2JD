@@ -1,0 +1,21 @@
+package com.seckill.model;
+
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+class OrderStatusTest {
+
+    @Test
+    void createdCanBePaidOrCanceled() {
+        assertDoesNotThrow(() -> OrderStatus.validateTransition("CREATED", "PAYING"));
+        assertDoesNotThrow(() -> OrderStatus.validateTransition("CREATED", "CANCELED"));
+    }
+
+    @Test
+    void paidCannotBeCanceled() {
+        assertThrows(IllegalStateException.class,
+                () -> OrderStatus.validateTransition("PAID", "CANCELED"));
+    }
+}
