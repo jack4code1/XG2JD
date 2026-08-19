@@ -6,35 +6,28 @@ const ICONS = { '餐饮':'🍔','服饰':'👗','数码':'📱','美妆':'💄',
 
 export default function Home({ onShopClick }) {
   const { isLogin } = useAuth()
-  const [merchants, setMerchants] = useState([])
-
-  useEffect(() => {
-    if (!isLogin) return
-    client.get('/merchant/list').then(({data}) => setMerchants(Array.isArray(data)?data:[])).catch(()=>{})
-  }, [isLogin])
+  const [list, setList] = useState([])
+  useEffect(()=>{ isLogin && client.get('/merchant/list').then(({data})=>setList(Array.isArray(data)?data:[])).catch(()=>{}) },[isLogin])
 
   return (
     <div>
-      <div className="hero bg-base-200 rounded-box mb-8 py-12">
-        <div className="hero-content text-center">
-          <div><h1 className="text-4xl font-bold gradient-text">🔥 限时秒杀</h1>
-          <p className="py-4 text-base-content/60">精选商家 · 超值优惠券 · 手慢无</p></div>
-        </div>
+      <div style={{ background:'linear-gradient(135deg,#6366f1,#8b5cf6)', borderRadius:20, padding:'48px 24px', textAlign:'center', marginBottom:32, color:'white' }}>
+        <h1 style={{ fontSize:36, fontWeight:800, margin:0 }}>🔥 限时秒杀</h1>
+        <p style={{ fontSize:16, opacity:.85, marginTop:8 }}>精选商家 · 超值优惠券 · 手慢无</p>
       </div>
-      <h2 className="text-2xl font-bold mb-6">🏬 精选商家</h2>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-        {merchants.map(m => (
-          <div key={m.id} onClick={() => onShopClick(m.id)}
-            className="card bg-base-100 shadow-lg hover:shadow-xl transition-all hover:-translate-y-1 cursor-pointer">
-            <div className="card-body items-center text-center p-6">
-              <span className="text-5xl mb-3">{ICONS[m.category]||'🛒'}</span>
-              <h3 className="card-title text-base">{m.shopName}</h3>
-              <div className="badge badge-outline">{m.category||'其他'}</div>
-              <p className="text-sm text-base-content/60">{m.couponCount} 张券</p>
-            </div>
+      <h2 style={{ fontSize:22, fontWeight:700, marginBottom:20, color:'#1f2937' }}>🏬 精选商家</h2>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(200px, 1fr))', gap:16 }}>
+        {list.map(m => (
+          <div key={m.id} onClick={()=>onShopClick(m.id)}
+            style={{ background:'white', borderRadius:16, padding:24, textAlign:'center', cursor:'pointer', boxShadow:'0 2px 12px rgba(0,0,0,0.06)', transition:'all .2s' }}
+            onMouseEnter={e=>e.currentTarget.style.transform='translateY(-2px)'}
+            onMouseLeave={e=>e.currentTarget.style.transform='none'}>
+            <div style={{ fontSize:48, marginBottom:12 }}>{ICONS[m.category]||'🛒'}</div>
+            <div style={{ fontSize:15, fontWeight:700, color:'#1f2937' }}>{m.shopName}</div>
+            <div style={{ display:'inline-block', background:'#eef2ff', color:'#6366f1', padding:'2px 10px', borderRadius:20, fontSize:12, margin:'6px 0' }}>{m.category||'其他'}</div>
+            <div style={{ fontSize:13, color:'#9ca3af', marginTop:4 }}>{m.couponCount} 张优惠券</div>
           </div>
         ))}
-        {merchants.length===0 && <div className="col-span-full text-center py-12 text-base-content/40"><p>暂无商家</p></div>}
       </div>
     </div>
   )

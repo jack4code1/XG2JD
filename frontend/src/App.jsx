@@ -15,53 +15,49 @@ function AppShell() {
   const goShop = (id) => { setShopId(id); setPage('shop') }
 
   return (
-    <div className="min-h-screen" data-theme="dark" style={{background:'#1d232a'}}>
+    <div style={{ minHeight: '100vh', background: '#f3f4f6' }}>
       {/* Navbar */}
-      <div className="navbar bg-base-100 shadow-lg">
-        <div className="flex-1">
+      <div style={{ background: 'white', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 64 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <button onClick={() => { setPage('home'); setShopId(null) }}
-            className="btn btn-ghost text-xl">
-            🔥 <span className="gradient-text font-bold">秒杀商城</span>
+            style={{ fontSize: 22, fontWeight: 800, border: 'none', background: 'none', cursor: 'pointer', color: '#6366f1' }}>
+            🔥 秒杀商城
           </button>
         </div>
-        <div className="flex-none gap-2">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {isLogin ? (
             <>
               {role === 'USER' ? (
                 <>
-                  <button onClick={() => { setPage('home'); setShopId(null) }}
-                    className={`btn btn-ghost btn-sm ${page==='home'?'btn-active':''}`}>🏬 商城</button>
-                  <button onClick={() => setPage('orders')}
-                    className={`btn btn-ghost btn-sm ${page==='orders'?'btn-active':''}`}>📋 订单</button>
+                  <NavBtn active={page==='home'} onClick={()=>{setPage('home');setShopId(null)}}>🏬 商城</NavBtn>
+                  <NavBtn active={page==='orders'} onClick={()=>setPage('orders')}>📋 订单</NavBtn>
                 </>
               ) : (
                 <>
-                  <button onClick={() => setPage('admin')}
-                    className={`btn btn-ghost btn-sm ${page==='admin'?'btn-active':''}`}>🏪 管理</button>
-                  <button onClick={() => setPage('ai')}
-                    className={`btn btn-ghost btn-sm ${page==='ai'?'btn-active':''}`}>🤖 AI</button>
+                  <NavBtn active={page==='admin'} onClick={()=>setPage('admin')}>🏪 管理</NavBtn>
+                  <NavBtn active={page==='ai'} onClick={()=>setPage('ai')}>🤖 AI</NavBtn>
                 </>
               )}
-              <div className="dropdown dropdown-end">
-                <div tabIndex={0} className="btn btn-ghost btn-circle avatar">
-                  <div className="w-8 rounded-full bg-primary text-primary-content flex items-center justify-center text-sm font-bold">
-                    {user.username[0].toUpperCase()}
-                  </div>
-                </div>
-                <ul tabIndex={0} className="menu menu-sm dropdown-content mt-3 z-50 p-2 shadow bg-base-100 rounded-box w-52">
-                  <li className="menu-title">{user.username}</li>
-                  <li><a onClick={() => { logout(); setPage('home') }}>🚪 退出</a></li>
-                </ul>
+              <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color:'white', display:'flex',alignItems:'center',justifyContent:'center', fontWeight:700, fontSize:14 }}>
+                {user.username[0].toUpperCase()}
               </div>
+              <span style={{ fontSize: 13, color: '#6b7280' }}>{user.username}</span>
+              <button onClick={() => { logout(); setPage('login') }}
+                style={{ border: '1px solid #e5e7eb', background: 'white', padding: '6px 14px', borderRadius: 8, fontSize: 13, cursor: 'pointer', color: '#ef4444' }}>
+                退出
+              </button>
             </>
           ) : (
-            <button onClick={() => setPage('login')} className="btn btn-primary btn-sm">登录</button>
+            <button onClick={() => setPage('login')}
+              style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color:'white', border:'none', padding:'8px 20px', borderRadius:10, fontSize:14, fontWeight:600, cursor:'pointer' }}>
+              登录
+            </button>
           )}
         </div>
       </div>
 
       {/* Content */}
-      <main className="max-w-6xl mx-auto px-4 py-6">
+      <main style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 16px' }}>
         {!isLogin && page !== 'login' ? <Login /> :
          page === 'login' ? <Login /> :
          page === 'shop' ? <Shop shopId={shopId} onBack={() => { setPage('home'); setShopId(null) }} /> :
@@ -71,6 +67,16 @@ function AppShell() {
          <Home onShopClick={goShop} />}
       </main>
     </div>
+  )
+}
+
+function NavBtn({ active, onClick, children }) {
+  return (
+    <button onClick={onClick} style={{
+      border: 'none', background: active ? '#eef2ff' : 'transparent',
+      color: active ? '#6366f1' : '#6b7280', padding: '8px 16px',
+      borderRadius: 8, fontSize: 14, fontWeight: active ? 600 : 400, cursor: 'pointer'
+    }}>{children}</button>
   )
 }
 
