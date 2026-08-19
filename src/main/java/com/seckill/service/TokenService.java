@@ -44,7 +44,7 @@ public class TokenService {
         redisTemplate.opsForHash().put("refresh:token:" + refreshToken, "role", role != null ? role : "USER");
         redisTemplate.expire("refresh:token:" + refreshToken, Duration.ofDays(refreshExpireDays));
 
-        return LoginResponse.of(accessToken, refreshToken, 30 * 60);
+        return LoginResponse.of(accessToken, refreshToken, 30 * 60, role != null ? role : "USER");
     }
 
     /**

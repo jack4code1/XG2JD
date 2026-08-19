@@ -13,12 +13,14 @@ public class LoginResponse {
     private String accessToken;
     private String refreshToken;
     private long expiresIn;
+    private String role;
 
-    public static LoginResponse of(String accessToken, String refreshToken, long expiresIn) {
+    public static LoginResponse of(String accessToken, String refreshToken, long expiresIn, String role) {
         return LoginResponse.builder()
                 .accessToken(accessToken)
                 .refreshToken(refreshToken)
                 .expiresIn(expiresIn)
+                .role(role)
                 .build();
     }
 }
