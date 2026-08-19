@@ -15,7 +15,10 @@ export default function Login() {
   const h = async (e, isReg) => {
     e.preventDefault(); sm('')
     try {
-      if (isReg) await client.post('/auth/register', { username: u, password: p, role: r })
+      if (isReg) {
+        const rsp = await client.post('/auth/register', { username: u, password: p, role: r })
+        if (!rsp.data.success) { sm(rsp.data.message); return }
+      }
       const { data } = await client.post('/auth/login', { username: u, password: p })
       if (!data.accessToken) { sm('登录失败'); return }
       localStorage.setItem('accessToken', data.accessToken)
