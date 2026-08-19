@@ -10,27 +10,34 @@ import './App.css'
 
 function AppShell() {
   const { user, isLogin, role, logout } = useAuth()
-  const [page, setPage] = useState('home')
+  const [page, setPage] = useState(() => role === 'MERCHANT' ? 'admin' : 'home')
   const [shopId, setShopId] = useState(null)
+  const landingPage = role === 'MERCHANT' ? 'admin' : 'home'
+  const allowedPages = role === 'MERCHANT' ? ['admin', 'ai'] : ['home', 'shop', 'orders']
+  const activePage = allowedPages.includes(page) ? page : landingPage
 
   const goShop = (id) => { setShopId(id); setPage('shop') }
+  const goLanding = () => {
+    setPage(landingPage)
+    setShopId(null)
+  }
 
   return (
     <div className="app">
       <header className="topbar">
-        <button className="brand" onClick={() => { setPage('home'); setShopId(null) }}><span className="brand-mark">火</span>今日抢券</button>
+        <button className="brand" onClick={goLanding}><span className="brand-mark">火</span>{role === 'MERCHANT' && isLogin ? '商家运营台' : '今日抢券'}</button>
         <div className="nav-right">
           {isLogin ? (
             <>
               {role === 'USER' ? (
                 <>
-                  <NavBtn active={page==='home'} onClick={()=>{setPage('home');setShopId(null)}}>🏬 商城</NavBtn>
-                  <NavBtn active={page==='orders'} onClick={()=>setPage('orders')}>📋 订单</NavBtn>
+                  <NavBtn active={activePage==='home'} onClick={()=>{setPage('home');setShopId(null)}}>🏬 商城</NavBtn>
+                  <NavBtn active={activePage==='orders'} onClick={()=>setPage('orders')}>📋 订单</NavBtn>
                 </>
               ) : (
                 <>
-                  <NavBtn active={page==='admin'} onClick={()=>setPage('admin')}>🏪 管理</NavBtn>
-                  <NavBtn active={page==='ai'} onClick={()=>setPage('ai')}>🤖 AI</NavBtn>
+                  <NavBtn active={activePage==='admin'} onClick={()=>setPage('admin')}>🏪 管理</NavBtn>
+                  <NavBtn active={activePage==='ai'} onClick={()=>setPage('ai')}>🤖 AI</NavBtn>
                 </>
               )}
               <div className="user-chip"><div className="avatar">{user.username[0].toUpperCase()}</div><span>{user.username}</span></div>
@@ -42,13 +49,14 @@ function AppShell() {
         </div>
       </header>
       <main className="shell">
-        {!isLogin && page !== 'login' ? <Login /> :
-         page === 'login' ? <Login /> :
-         page === 'shop' ? <Shop shopId={shopId} onBack={() => { setPage('home'); setShopId(null) }} onOrders={() => setPage('orders')} /> :
-         page === 'orders' ? <Orders /> :
-         page === 'admin' ? <Admin /> :
-         page === 'ai' ? <AIPage /> :
-         <Home onShopClick={goShop} />}
+        {!isLogin || page === 'login' ? <Login /> :
+         role === 'MERCHANT' ? (
+           activePage === 'ai' ? <AIPage /> : <Admin />
+         ) : (
+           activePage === 'shop' ? <Shop shopId={shopId} onBack={goLanding} onOrders={() => setPage('orders')} /> :
+           activePage === 'orders' ? <Orders /> :
+           <Home onShopClick={goShop} />
+         )}
       </main>
     </div>
   )
