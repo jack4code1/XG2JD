@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAuth } from '../App'
+import { useAuth } from '../AuthContext'
 import client from '../api/client'
 
 const STATUS = { CREATED:'待支付', PAYING:'支付中', PAID:'已支付', USED:'已使用', CANCELED:'已取消', EXPIRED:'已过期' }

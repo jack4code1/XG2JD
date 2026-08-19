@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { createContext, useContext, useState, useEffect } from 'react'
+import { AuthProvider } from './AuthContext'
 import Navbar from './components/Navbar'
 import Home from './pages/Home'
 import Shop from './pages/Shop'
@@ -7,28 +7,6 @@ import Orders from './pages/Orders'
 import Login from './pages/Login'
 import Admin from './pages/Admin'
 import AIPage from './pages/AIPage'
-
-const AuthCtx = createContext(null)
-export const useAuth = () => useContext(AuthCtx)
-
-function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('user') || 'null') } catch { return null }
-  })
-
-  useEffect(() => {
-    const sync = () => { setUser(JSON.parse(localStorage.getItem('user')||'null')) }
-    window.addEventListener('storage', sync)
-    return () => window.removeEventListener('storage', sync)
-  }, [])
-
-  const login = (u) => { setUser(u); localStorage.setItem('user', JSON.stringify(u)) }
-  const logout = () => { localStorage.clear(); setUser(null); window.dispatchEvent(new Event('storage')) }
-  const isLogin = !!user
-  const role = user?.role || 'USER'
-
-  return <AuthCtx.Provider value={{ user, isLogin, role, login, logout }}>{children}</AuthCtx.Provider>
-}
 
 export default function App() {
   return (

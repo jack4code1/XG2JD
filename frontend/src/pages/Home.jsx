@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { useAuth } from '../App'
+import { useAuth } from '../AuthContext'
 import client from '../api/client'
 
 const ICONS = { '餐饮': '🍔', '服饰': '👗', '数码': '📱', '美妆': '💄', '其他': '🛒' }
