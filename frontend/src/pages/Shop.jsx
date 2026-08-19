@@ -17,8 +17,18 @@ export default function Shop({ shopId, onBack, onOrders }) {
   const go = async (cid) => {
     try {
       const { data } = await client.post('/seckill/execute', { couponId: cid, deviceFingerprint: 'fp-' + Math.random().toString(36).slice(2, 10) })
-      setR(data)
-      if (data.success) { load(); client.get('/order/user/coupons').then(({ data: owned }) => setCoupons(Array.isArray(owned) ? owned : [])) }
+      if (data.success) {
+        let message = '抢券成功，订单正在创建…'
+        for (let attempt = 0; attempt < 5; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, 300))
+          try {
+            const result = await client.get('/seckill/result/' + data.orderNo)
+            if (result.data?.success) { message = result.data.message || '抢券成功，订单已创建'; break }
+          } catch { /* 订单仍在 MQ 队列中，继续轮询 */ }
+        }
+        setR({ ...data, message })
+        load(); client.get('/order/user/coupons').then(({ data: owned }) => setCoupons(Array.isArray(owned) ? owned : []))
+      } else setR(data)
     } catch { setR({ success: false, message: '系统繁忙，请稍后再试' }) }
   }
 

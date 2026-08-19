@@ -13,7 +13,7 @@ with open("/tmp/seckill_tokens.txt") as f:
     TOKENS = [t.strip() for t in f if t.strip()]
 print(f"Tokens loaded: {len(TOKENS)}")
 
-stats = {"success": 0, "fail": 0, "times": [], "errors": {}}
+stats = {"success": 0, "fail": 0, "times": [], "errors": {}, "order_nos": []}
 lock = threading.Lock()
 
 def seckill(token, idx):
@@ -33,6 +33,8 @@ def seckill(token, idx):
         with lock:
             if resp.get("success"):
                 stats["success"] += 1
+                if resp.get("orderNo"):
+                    stats["order_nos"].append(resp["orderNo"])
             else:
                 stats["fail"] += 1
                 stats["errors"][resp.get("message","?")] = stats["errors"].get(resp.get("message","?"), 0) + 1
@@ -78,4 +80,6 @@ if stats["errors"]:
         print(f"    [{v}] {k}")
 stock = subprocess.run(["redis-cli", "HGET", f"seckill:coupon:{COUPON_ID}", "remain"], capture_output=True).stdout.decode().strip()
 print(f"  库存: {stock}")
+duplicate_orders = len(stats["order_nos"]) - len(set(stats["order_nos"]))
+print(f"  重复订单号: {duplicate_orders} | 结论: {'PASS' if duplicate_orders == 0 else 'FAIL'}")
 print("=" * 55)

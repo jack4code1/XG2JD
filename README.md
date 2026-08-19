@@ -62,11 +62,13 @@ java -jar target/seckill-coupon-1.0.0.jar
 
 ## 核心架构
 
-### 秒杀全链路（5层漏斗）
+### 秒杀全链路（5层漏斗 + 原子提交）
 ```
-Bloom Filter 预筛 → 策略权重计算 → Lua 资格校验 → Lua 原子扣库存 → MQ 异步下单
-    1.2MB             4策略链            <5ms              <3ms           异步
+Bloom Filter 预筛 → 策略权重计算 → Lua原子校验/扣库存/标记用户 → MQ异步下单 → 结果轮询
+    性能预筛          4策略链              单脚本提交            削峰落库       CREATED/失败
 ```
+
+秒杀 Lua 脚本将活动时间校验、一人一单校验、库存扣减和用户标记放在同一次 Redis 原子执行中，避免并发请求在“检查”和“标记”之间产生重复订单。Bloom Filter 只承担性能预筛，Redis Set 是最终一致性判断依据。
 
 ### 策略链
 ```
@@ -100,6 +102,7 @@ AntiFraudStrategy(P0) → NewUserStrategy(P1) → DormantUserStrategy(P2) → De
 | `/api/auth/logout` | POST | 登出 |
 | `/api/coupon/create` | POST | 创建优惠券（需登录） |
 | `/api/seckill/execute` | POST | 秒杀（需登录） |
+| `/api/seckill/result/{orderNo}` | GET | 查询异步秒杀订单结果（需登录且只能查本人） |
 | `/api/order/{orderNo}` | GET | 查询订单 |
 
 ## 压测
@@ -114,6 +117,8 @@ python3 scripts/bench_pure.py <couponId> <并发数> <请求数>
 # 含登录的完整压测
 python3 scripts/bench.py <并发数> <请求数> <couponId>
 ```
+
+纯秒杀压测脚本会输出成功数、Redis 剩余库存和重复订单号数量。库存为 `N` 时，成功订单数不应超过 `N`，重复订单号应为 `0`。执行前请确认优惠券活动时间有效，并准备 `/tmp/seckill_tokens.txt`。
 
 ### 压测结果
 ```

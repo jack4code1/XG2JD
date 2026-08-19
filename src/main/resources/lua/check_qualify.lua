@@ -4,7 +4,7 @@
 -- ARGV[1]: userId
 -- ARGV[2]: currentTime (毫秒时间戳字符串, 同位数可字符串比较)
 -- ARGV[3]: perUserMax
--- 返回: -1=不在活动时间, -2=已抢过, -3=库存不足, 1=有资格
+-- 返回: -1=不在活动时间, -2=已抢过, -3=库存不足, >=0=扣减后的剩余库存
 
 local couponKey = KEYS[1]
 local userSetKey = KEYS[2]
@@ -33,4 +33,9 @@ if remain <= 0 then
     return -3
 end
 
-return 1
+-- 校验、扣库存、标记用户必须在同一个 Lua 执行单元内完成，避免并发重复领取。
+redis.call('HINCRBY', couponKey, 'remain', -1)
+redis.call('HINCRBY', couponKey, 'version', 1)
+redis.call('SADD', userSetKey, userId)
+
+return remain - 1

@@ -2,6 +2,8 @@ package com.seckill.controller;
 
 import com.seckill.dto.SeckillRequest;
 import com.seckill.dto.SeckillResponse;
+import com.seckill.dto.SeckillResultResponse;
+import com.seckill.repository.OrderRepository;
 import com.seckill.service.SeckillService;
 import com.seckill.util.DeviceFingerprintUtil;
 import com.seckill.util.UserContext;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.*;
 public class SeckillController {
 
     private final SeckillService seckillService;
+    private final OrderRepository orderRepository;
 
     /**
      * 执行秒杀
@@ -51,8 +54,34 @@ public class SeckillController {
      * 查询秒杀结果（供前端轮询）
      */
     @GetMapping("/result/{orderNo}")
-    public SeckillResponse queryResult(@PathVariable String orderNo) {
-        // TODO: 实现订单状态查询
-        return SeckillResponse.ok(orderNo, 0);
+    public SeckillResultResponse queryResult(@PathVariable String orderNo) {
+        Long userId = UserContext.getUserId();
+        if (userId == null) {
+            return SeckillResultResponse.builder()
+                    .success(false).orderNo(orderNo).status("UNAUTHORIZED").message("请先登录").build();
+        }
+
+        return orderRepository.findByOrderNo(orderNo)
+                .filter(order -> userId.equals(order.getUserId()))
+                .map(order -> SeckillResultResponse.builder()
+                        .success(true)
+                        .orderNo(order.getOrderNo())
+                        .status(order.getStatus())
+                        .message(resultMessage(order.getStatus()))
+                        .createdAt(order.getCreatedAt())
+                        .updatedAt(order.getUpdatedAt())
+                        .build())
+                .orElseGet(() -> SeckillResultResponse.builder()
+                        .success(false).orderNo(orderNo).status("NOT_FOUND").message("订单还在创建中，请稍后重试").build());
+    }
+
+    private String resultMessage(String status) {
+        return switch (status) {
+            case "CREATED" -> "订单已创建，等待后续处理";
+            case "PAID" -> "订单已支付";
+            case "CANCELED" -> "订单已取消";
+            case "EXPIRED" -> "订单已过期";
+            default -> "订单状态：" + status;
+        };
     }
 }

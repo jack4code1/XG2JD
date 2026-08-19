@@ -9,7 +9,6 @@ import com.seckill.dto.SeckillResponse;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.redisson.api.RedissonClient;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -37,13 +36,11 @@ import java.util.concurrent.TimeUnit;
 public class SeckillService {
 
     private final RedisTemplate<String, Object> redisTemplate;
-    private final RedissonClient redissonClient;
     private final RabbitTemplate rabbitTemplate;
     private final AllocationService allocationService;
     private final HotKeyDetector hotKeyDetector;
 
     private final DefaultRedisScript<Long> checkQualifyScript;
-    private final DefaultRedisScript<Long> deductStockScript;
 
     private BloomFilter<String> bloomFilter;
 
@@ -87,7 +84,7 @@ public class SeckillService {
             return SeckillResponse.fail("活动太火爆了，请稍后再试");
         }
 
-        // ──── 第三层：资格校验 Lua 脚本 ────
+        // ──── 第三层：资格校验 + 扣库存 + 一人一单原子 Lua ────
         String couponKey = "seckill:coupon:" + couponId;
         // 记录热点访问（每次秒杀请求都上报到环形缓冲区）
         hotKeyDetector.record(couponKey);
@@ -101,7 +98,8 @@ public class SeckillService {
         );
 
         if (qualifyResult == null || qualifyResult < 0) {
-            String reason = switch ((int) (long) qualifyResult) {
+            int result = qualifyResult == null ? -99 : qualifyResult.intValue();
+            String reason = switch (result) {
                 case -1 -> "活动未开始或已结束";
                 case -2 -> "您已参与过本次活动";
                 case -3 -> "优惠券已抢光";
@@ -111,20 +109,9 @@ public class SeckillService {
             return SeckillResponse.fail(reason);
         }
 
-        // ──── 第四层：原子扣库存 Lua 脚本 ────
+        // Lua 返回扣减后的剩余库存，成功后才生成订单并投递 MQ。
         String orderNo = generateOrderNo();
-        Long deductResult = redisTemplate.execute(
-                deductStockScript,
-                List.of(couponKey),
-                "0" // version 用于乐观锁（简化处理）
-        );
-
-        if (deductResult == null || deductResult < 0) {
-            return SeckillResponse.fail("优惠券已抢光");
-        }
-
-        // ──── 第五层：标记用户已抢 + 更新Bloom Filter ────
-        redisTemplate.opsForSet().add(userSetKey, userId.toString());
+        // ──── 第四层：更新进程内 Bloom Filter（仅作性能预筛） ────
         bloomFilter.put(userBloomKey);
 
         // ──── 异步发MQ创建订单 ────

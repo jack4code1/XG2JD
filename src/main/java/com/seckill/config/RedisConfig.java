@@ -43,14 +43,6 @@ public class RedisConfig {
         return Redisson.create(config);
     }
 
-    @Bean("deductStockScript")
-    public DefaultRedisScript<Long> deductStockScript() {
-        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
-        script.setLocation(new ClassPathResource("lua/deduct_stock.lua"));
-        script.setResultType(Long.class);
-        return script;
-    }
-
     @Bean("checkQualifyScript")
     public DefaultRedisScript<Long> checkQualifyScript() {
         DefaultRedisScript<Long> script = new DefaultRedisScript<>();
