@@ -31,6 +31,11 @@ public class AuthInterceptor implements HandlerInterceptor {
             return true;
         }
 
+        // 放行AI接口
+        if (path.contains("/api/ai/")) {
+            return true;
+        }
+
         // 放行健康检查
         if (path.contains("/actuator")) {
             return true;
