@@ -76,7 +76,7 @@ seckill:
   order:
     expire-minutes: 15
   jwt:
-    secret: ${JWT_SECRET:your-jwt-secret-min-32-bytes}
+    secret: ${JWT_SECRET:your-jwt-secret-minimum-32-bytes-long}
     access-expire-minutes: 30
     refresh-expire-days: 7
 

@@ -9,6 +9,7 @@ import java.util.List;
 
 public interface CouponRepository extends JpaRepository<Coupon, Long> {
     List<Coupon> findByStatus(Integer status);
+    List<Coupon> findByMerchantIdOrderByCreatedAtDesc(Long merchantId);
 
     @Modifying
     @Query("UPDATE Coupon c SET c.remainStock = c.remainStock - 1 " +

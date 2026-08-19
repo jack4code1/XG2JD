@@ -36,11 +36,6 @@ public class AuthInterceptor implements HandlerInterceptor {
             return true;
         }
 
-        // 放行商家列表（商城浏览）
-        if (path.contains("/api/merchant/")) {
-            return true;
-        }
-
         // 放行健康检查
         if (path.contains("/actuator")) {
             return true;

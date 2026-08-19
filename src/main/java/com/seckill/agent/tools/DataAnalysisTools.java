@@ -49,13 +49,28 @@ public class DataAnalysisTools {
 
     /** 给 Copilot 提供可追溯的实时业务快照，而不是让模型凭经验编数据。 */
     public Map<String, Object> snapshot() {
+        return snapshot(null);
+    }
+
+    /** 商户工作台只统计该商户自己的优惠券和订单。 */
+    public Map<String, Object> snapshot(Long merchantId) {
         Map<String, Object> result = new LinkedHashMap<>();
         try {
-            Integer orders = jdbc.queryForObject("SELECT COUNT(*) FROM t_order WHERE created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)", Integer.class);
-            Integer paid = jdbc.queryForObject("SELECT COUNT(*) FROM t_order WHERE status='PAID' AND created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)", Integer.class);
+            String orderScope = merchantId == null ? "" : " AND coupon_id IN (SELECT id FROM t_coupon WHERE merchant_id = ?)";
+            String stockScope = merchantId == null ? "" : " WHERE merchant_id = ?";
+            Integer orders = merchantId == null
+                    ? jdbc.queryForObject("SELECT COUNT(*) FROM t_order WHERE created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)", Integer.class)
+                    : jdbc.queryForObject("SELECT COUNT(*) FROM t_order WHERE created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)" + orderScope, Integer.class, merchantId);
+            Integer paid = merchantId == null
+                    ? jdbc.queryForObject("SELECT COUNT(*) FROM t_order WHERE status='PAID' AND created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)", Integer.class)
+                    : jdbc.queryForObject("SELECT COUNT(*) FROM t_order WHERE status='PAID' AND created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)" + orderScope, Integer.class, merchantId);
             Integer users = jdbc.queryForObject("SELECT COUNT(*) FROM t_user", Integer.class);
-            Integer stock = jdbc.queryForObject("SELECT COALESCE(SUM(total_stock),0) FROM t_coupon", Integer.class);
-            Integer remain = jdbc.queryForObject("SELECT COALESCE(SUM(remain_stock),0) FROM t_coupon", Integer.class);
+            Integer stock = merchantId == null
+                    ? jdbc.queryForObject("SELECT COALESCE(SUM(total_stock),0) FROM t_coupon", Integer.class)
+                    : jdbc.queryForObject("SELECT COALESCE(SUM(total_stock),0) FROM t_coupon" + stockScope, Integer.class, merchantId);
+            Integer remain = merchantId == null
+                    ? jdbc.queryForObject("SELECT COALESCE(SUM(remain_stock),0) FROM t_coupon", Integer.class)
+                    : jdbc.queryForObject("SELECT COALESCE(SUM(remain_stock),0) FROM t_coupon" + stockScope, Integer.class, merchantId);
             result.put("orders7d", orders == null ? 0 : orders);
             result.put("paidOrders7d", paid == null ? 0 : paid);
             result.put("paymentRate", orders == null || orders == 0 ? 0 : Math.round(paid * 1000.0 / orders) / 10.0);

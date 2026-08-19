@@ -52,9 +52,13 @@ public class AgentOrchestrator {
      * Copilot 主流程：先取真实业务快照，再并行调用 Agent，最后只返回结构化、可执行的结果。
      */
     public Map<String, Object> copilot(String query) {
+        return copilot(query, null);
+    }
+
+    public Map<String, Object> copilot(String query, Long merchantId) {
         long start = System.currentTimeMillis();
         String request = query == null || query.isBlank() ? "分析当前秒杀运营情况" : query.trim();
-        Map<String, Object> metrics = dataTools.snapshot();
+        Map<String, Object> metrics = dataTools.snapshot(merchantId);
         Map<String, Object> risks = riskTools.snapshot();
         Map<String, Object> strategy = strategyTools.recommend(request);
         String context = "真实业务快照(不要编造数据): metrics=" + metrics + ", risks=" + risks + ", strategy=" + strategy;

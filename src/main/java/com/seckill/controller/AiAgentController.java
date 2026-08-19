@@ -51,14 +51,14 @@ public class AiAgentController {
     @PostMapping("/copilot/query")
     public Map<String, Object> copilot(@RequestBody Map<String, String> request) {
         requireMerchant();
-        return orchestrator.copilot(request.get("query"));
+        return orchestrator.copilot(request.get("query"), currentMerchantId());
     }
 
     /** 写操作必须由商家二次确认后调用，避免模型直接修改业务数据。 */
     @PostMapping("/copilot/execute")
     public Map<String, Object> executeCopilot(@RequestBody Map<String, String> request) {
         requireMerchant();
-        Map<String, Object> result = orchestrator.copilot(request.get("query"));
+        Map<String, Object> result = orchestrator.copilot(request.get("query"), currentMerchantId());
         if (!"CAMPAIGN".equals(result.get("intent"))) {
             throw new IllegalArgumentException("当前对话没有可执行的活动创建动作");
         }
@@ -139,6 +139,11 @@ public class AiAgentController {
         if (!"MERCHANT".equals(UserContext.getRole())) {
             throw new ForbiddenException("只有商家可以使用 AI 运营功能");
         }
+    }
+
+    private Long currentMerchantId() {
+        return merchantRepository.findByUserId(UserContext.getUserId())
+                .orElseThrow(() -> new IllegalArgumentException("商家店铺不存在")).getId();
     }
 
     private String extract(String plan, String keyword, String defaultValue) {
