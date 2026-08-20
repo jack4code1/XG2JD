@@ -19,6 +19,33 @@
 
 ## 快速启动
 
+### Docker Compose（推荐）
+
+Docker Compose 会启动 MySQL、Redis、RabbitMQ，并构建包含前端静态资源的应用镜像。默认使用国内 Docker Hub 代理；首次启动需要下载基础镜像，之后直接复用本地镜像和 `mysql-data` 数据卷：
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+切换镜像仓库时只需设置 `IMAGE_REGISTRY`，例如使用 Docker Hub 官方源：
+
+```bash
+IMAGE_REGISTRY=docker.io docker compose up -d --build
+```
+
+访问 `http://localhost:8080/`；停止应用但保留数据库数据：
+
+```bash
+docker compose down
+```
+
+监控组件是可选的，启用后 Grafana 使用 3000 端口：
+
+```bash
+docker compose --profile observability up -d
+```
+
 ### 1. 启动中间件
 ```bash
 # MySQL (已通过 Homebrew 安装)

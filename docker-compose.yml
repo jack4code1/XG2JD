@@ -1,8 +1,6 @@
-version: '3.8'
-
 services:
   mysql:
-    image: mysql:8.0
+    image: ${IMAGE_REGISTRY:-docker.m.daocloud.io}/library/mysql:8.0
     container_name: seckill-mysql
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
@@ -12,6 +10,7 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
       - ./src/main/resources/sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./src/main/resources/sql/test-data.sql:/docker-entrypoint-initdb.d/test-data.sql
     command: --default-authentication-plugin=mysql_native_password
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
@@ -20,7 +19,7 @@ services:
       retries: 5
 
   redis:
-    image: redis:7-alpine
+    image: ${IMAGE_REGISTRY:-docker.m.daocloud.io}/library/redis:7-alpine
     container_name: seckill-redis
     ports:
       - "6379:6379"
@@ -32,7 +31,7 @@ services:
       retries: 5
 
   rabbitmq:
-    image: rabbitmq:3.12-management-alpine
+    image: ${IMAGE_REGISTRY:-docker.m.daocloud.io}/library/rabbitmq:3.12-management-alpine
     container_name: seckill-rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: admin
@@ -46,8 +45,37 @@ services:
       timeout: 5s
       retries: 5
 
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        IMAGE_REGISTRY: ${IMAGE_REGISTRY:-docker.m.daocloud.io}
+    container_name: seckill-app
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/seckill?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
+      REDIS_HOST: redis
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: admin
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-admin123}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-your-deepseek-api-key}
+      JWT_SECRET: ${JWT_SECRET:-seckill-coupon-jwt-secret-key-32bytes}
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
   canal-server:
-    image: canal/canal-server:v1.1.6
+    profiles: ["full"]
+    image: ${IMAGE_REGISTRY:-docker.m.daocloud.io}/canal/canal-server:v1.1.6
     container_name: seckill-canal
     depends_on:
       mysql:
@@ -61,7 +89,8 @@ services:
       - ./src/main/resources/canal/instance.properties:/home/admin/canal-server/conf/example/instance.properties
 
   prometheus:
-    image: prom/prometheus:v2.48.0
+    profiles: ["observability"]
+    image: ${IMAGE_REGISTRY:-docker.m.daocloud.io}/prom/prometheus:v2.48.0
     container_name: seckill-prometheus
     ports:
       - "9090:9090"
@@ -69,7 +98,8 @@ services:
       - ./src/main/resources/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
 
   grafana:
-    image: grafana/grafana:10.2.0
+    profiles: ["observability"]
+    image: ${IMAGE_REGISTRY:-docker.m.daocloud.io}/grafana/grafana:10.2.0
     container_name: seckill-grafana
     ports:
       - "3000:3000"
