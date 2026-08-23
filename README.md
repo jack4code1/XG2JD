@@ -214,7 +214,6 @@ src/main/resources/
 
 - [项目交接文档](docs/PROJECT_HANDOFF.md)：完整链路、配置、排障说明
 - [并发实验报告](docs/BENCHMARK_REPORT.md)：压测方法与历史实验记录
-- [AI 接手指令](docs/AI_BOOTSTRAP.md)：面向后续维护者的上下文说明
 
 ---
 

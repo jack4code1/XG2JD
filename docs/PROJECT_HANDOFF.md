@@ -287,4 +287,4 @@ curl -X POST http://localhost:8080/api/ai/eval \
 
 对应语雀文档：`tongtaixin.ttx/fy06pg/ptaa84vaki0spf7g`。
 
-给新的 AI coding agent 使用时，同时提供 `docs/AI_BOOTSTRAP.md`、本文件和 `README.md`。环境变量模板见仓库根目录 `.env.example`。
+环境变量模板见仓库根目录 `.env.example`。
