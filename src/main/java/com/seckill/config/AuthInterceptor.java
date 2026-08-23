@@ -36,8 +36,9 @@ public class AuthInterceptor implements HandlerInterceptor {
             return true;
         }
 
-        // 放行健康检查
-        if (path.contains("/actuator")) {
+        // Only liveness and Prometheus scraping are anonymous. Other actuator
+        // endpoints require a normal authenticated request.
+        if (path.equals("/actuator/health") || path.equals("/actuator/prometheus")) {
             return true;
         }
 

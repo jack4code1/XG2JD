@@ -59,9 +59,23 @@ public class HotKeyCacheManager {
      */
     @SuppressWarnings("unchecked")
     public <T> T get(String key, Class<T> type) {
-        if (hotKeyDetector.isHot(key)) {
+        return get(key, key, type);
+    }
+
+    /**
+     * Reads a cache entry while allowing the access metric key to remain stable
+     * across immutable cache versions. For example, a coupon detail can be
+     * cached under coupon:detail:12:v:4 while its hotness is tracked as
+     * coupon:detail:12.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> T get(String key, String hotKey, Class<T> type) {
+        if (hotKeyDetector.isHot(hotKey)) {
             return getFromHotCache(key, type);
         }
+        // The detector kept the key hot for its three-cycle cool-down window.
+        // Once it finally demotes the key, release the dedicated hot cache.
+        hotCaches.remove(key);
         return getFromNormalCache(key, type);
     }
 
@@ -127,6 +141,15 @@ public class HotKeyCacheManager {
      */
     public void putNormal(String key, Object value) {
         normalCache.put(key, value);
+    }
+
+    /** Evict a single immutable version from both local cache tiers. */
+    public void evict(String key) {
+        normalCache.invalidate(key);
+        Cache<String, CacheValue<?>> hotCache = hotCaches.remove(key);
+        if (hotCache != null) {
+            hotCache.invalidate(key);
+        }
     }
 
     /**

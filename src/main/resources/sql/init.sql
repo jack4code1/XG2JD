@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS ai_task (
     result_json TEXT,
     requires_confirmation BOOLEAN NOT NULL DEFAULT TRUE,
     confirmed_at DATETIME,
+    executing_at DATETIME,
     completed_at DATETIME,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -144,4 +145,30 @@ CREATE TABLE IF NOT EXISTS ai_action (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_ai_action_task_time (task_id, created_at),
     INDEX idx_ai_action_merchant (merchant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 优惠活动配置的不可变发布历史，可用于商家查看和回滚。
+CREATE TABLE IF NOT EXISTS coupon_version (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    coupon_id BIGINT NOT NULL,
+    merchant_id BIGINT NOT NULL,
+    version_no INT NOT NULL,
+    action VARCHAR(32) NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_by BIGINT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_coupon_version_coupon (coupon_id, version_no),
+    INDEX idx_coupon_version_merchant (merchant_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 商家活动状态、AI 执行结果等站内通知。
+CREATE TABLE IF NOT EXISTS user_notification (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    recipient_id BIGINT NOT NULL,
+    type VARCHAR(32) NOT NULL,
+    title VARCHAR(128) NOT NULL,
+    content VARCHAR(512) NOT NULL,
+    read_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_notification_recipient (recipient_id, read_at, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

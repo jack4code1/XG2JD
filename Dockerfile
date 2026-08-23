@@ -11,11 +11,11 @@ RUN npm run build
 FROM ${IMAGE_REGISTRY}/library/maven:3.9-eclipse-temurin-17 AS backend-build
 
 WORKDIR /workspace
+COPY maven-settings.xml /usr/share/maven/ref/settings.xml
 COPY pom.xml ./
-RUN mvn -q -DskipTests dependency:go-offline
 COPY . ./
 COPY --from=frontend-build /workspace/src/main/resources/static/ ./src/main/resources/static/
-RUN mvn -q -DskipTests package
+RUN mvn -B -s /usr/share/maven/ref/settings.xml -DskipTests package
 
 FROM ${IMAGE_REGISTRY}/library/eclipse-temurin:17-jre
 

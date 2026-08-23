@@ -9,6 +9,7 @@ import com.seckill.model.Coupon;
 import com.seckill.repository.AiActionRepository;
 import com.seckill.repository.AiTaskRepository;
 import com.seckill.repository.CouponRepository;
+import com.seckill.repository.MerchantRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
@@ -42,6 +43,10 @@ public class AiExecutionService {
     private final AiTaskRepository taskRepository;
     private final AiActionRepository actionRepository;
     private final CouponRepository couponRepository;
+    private final CouponCacheService couponCacheService;
+    private final CouponVersionService couponVersionService;
+    private final NotificationService notificationService;
+    private final MerchantRepository merchantRepository;
     private final RedisTemplate<String, Object> redisTemplate;
     private final AgentOrchestrator orchestrator;
     private final ObjectMapper objectMapper;
@@ -86,18 +91,28 @@ public class AiExecutionService {
                 .stream().map(this::toView).toList();
     }
 
-    public synchronized Map<String, Object> confirm(Long merchantId, String taskNo) {
+    public Map<String, Object> confirm(Long merchantId, String taskNo) {
         AiTask task = ownedTask(merchantId, taskNo);
         if (COMPLETED.equals(task.getStatus())) return toView(task); // confirmation is idempotent
         if (!WAITING_CONFIRMATION.equals(task.getStatus())) {
             throw new IllegalArgumentException("任务当前状态不可执行：" + task.getStatus());
         }
 
+        LocalDateTime confirmedAt = LocalDateTime.now();
+        if (taskRepository.claimWaitingForExecution(taskNo, merchantId, WAITING_CONFIRMATION, EXECUTING, confirmedAt) != 1) {
+            AiTask latest = ownedTask(merchantId, taskNo);
+            if (COMPLETED.equals(latest.getStatus())) return toView(latest);
+            if (EXECUTING.equals(latest.getStatus())) {
+                throw new IllegalStateException("任务正在由另一实例执行，请稍后刷新结果");
+            }
+            throw new IllegalArgumentException("任务当前状态不可执行：" + latest.getStatus());
+        }
+
+        // Reload after the conditional update so this instance works on the
+        // state it successfully claimed, not a stale entity snapshot.
+        task = ownedTask(merchantId, taskNo);
         AiAction action = actionRepository.findByTaskIdOrderByCreatedAtAsc(task.getId()).stream()
                 .findFirst().orElseThrow(() -> new IllegalStateException("任务缺少动作记录"));
-        task.setStatus(EXECUTING);
-        task.setConfirmedAt(LocalDateTime.now());
-        taskRepository.save(task);
         action.setStatus(EXECUTING);
         actionRepository.save(action);
 
@@ -118,6 +133,8 @@ public class AiExecutionService {
             action.setResultJson(task.getResultJson());
             action.setExecutedAt(LocalDateTime.now());
             actionRepository.save(action);
+            notifyMerchant(task.getMerchantId(), "AI_TASK_COMPLETED", "AI 活动任务已执行",
+                    "「" + task.getActionType() + "」已完成，可在活动管理中查看版本和缓存快照。");
             return toView(task);
         } catch (Exception e) {
             task.setStatus(FAILED);
@@ -128,14 +145,16 @@ public class AiExecutionService {
             action.setErrorMessage(safeMessage(e));
             action.setExecutedAt(LocalDateTime.now());
             actionRepository.save(action);
+            notifyMerchant(task.getMerchantId(), "AI_TASK_FAILED", "AI 活动任务执行失败",
+                    "「" + task.getActionType() + "」执行失败：" + safeMessage(e));
             return toView(task);
         }
     }
 
     public Map<String, Object> cancel(Long merchantId, String taskNo) {
         AiTask task = ownedTask(merchantId, taskNo);
-        if (!WAITING_CONFIRMATION.equals(task.getStatus())) {
-            throw new IllegalArgumentException("只有待确认任务可以取消");
+        if (!WAITING_CONFIRMATION.equals(task.getStatus()) && !"RECOVERY_REQUIRED".equals(task.getStatus())) {
+            throw new IllegalArgumentException("只有待确认或待人工复核任务可以取消");
         }
         task.setStatus(CANCELED);
         task.setCompletedAt(LocalDateTime.now());
@@ -231,6 +250,7 @@ public class AiExecutionService {
             throw e;
         }
         task.setTargetCouponId(coupon.getId());
+        couponVersionService.record(coupon, "AI_CREATE", null);
         return linkedMap("success", true, "tool", CREATE_CAMPAIGN, "couponId", coupon.getId(),
                 "couponName", coupon.getCouponName(), "stock", stock, "redisWarmed", true);
     }
@@ -252,6 +272,7 @@ public class AiExecutionService {
             syncMutableFields(coupon);
             throw e;
         }
+        couponVersionService.record(coupon, "AI_INCREASE_STOCK", null);
         return linkedMap("success", true, "tool", INCREASE_STOCK, "couponId", coupon.getId(),
                 "added", amount, "totalStock", coupon.getTotalStock(), "remainStock", coupon.getRemainStock());
     }
@@ -274,6 +295,7 @@ public class AiExecutionService {
             syncMutableFields(coupon);
             throw e;
         }
+        couponVersionService.record(coupon, pause ? "AI_PAUSE" : "AI_RESUME", null);
         return linkedMap("success", true, "tool", pause ? PAUSE_CAMPAIGN : RESUME_CAMPAIGN,
                 "couponId", coupon.getId(), "couponName", coupon.getCouponName(), "status", coupon.getStatus());
     }
@@ -319,6 +341,7 @@ public class AiExecutionService {
         redisTemplate.opsForHash().put(key, "status", coupon.getStatus());
         redisTemplate.opsForHash().put(key, "start_time", epoch(coupon.getStartTime()));
         redisTemplate.opsForHash().put(key, "end_time", epoch(coupon.getEndTime()));
+        couponCacheService.publish(coupon);
     }
 
     private void syncMutableFields(Coupon coupon) {
@@ -330,6 +353,7 @@ public class AiExecutionService {
             redisTemplate.opsForHash().put(key, "status", coupon.getStatus());
             redisTemplate.opsForHash().put(key, "end_time", epoch(coupon.getEndTime()));
         }
+        couponCacheService.publish(coupon);
     }
 
     private Map<String, Object> toView(AiTask task) {
@@ -399,6 +423,11 @@ public class AiExecutionService {
     }
 
     private String couponKey(Long id) { return "seckill:coupon:" + id; }
+
+    private void notifyMerchant(Long merchantId, String type, String title, String content) {
+        merchantRepository.findById(merchantId)
+                .ifPresent(merchant -> notificationService.notify(merchant.getUserId(), type, title, content));
+    }
 
     private Map<String, Object> linkedMap(Object... values) {
         Map<String, Object> map = new LinkedHashMap<>();

@@ -77,6 +77,8 @@ seckill:
     threshold-qps: 100
   order:
     expire-minutes: 15
+  pending-order:
+    max-retries: 10
   jwt:
     secret: ${JWT_SECRET:your-jwt-secret-minimum-32-bytes-long}
     access-expire-minutes: 30

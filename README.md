@@ -1,6 +1,6 @@
 # 高并发优惠券秒杀系统
 
-面向校招简历的秒杀项目，聚焦三个差异化：**高并发秒杀与最终一致性**、**可确认可审计的 AI 运营执行 Agent**、**热点自动发现与动态缓存降级**。
+面向校招简历的 AI 优惠活动创建与高并发领取平台，聚焦三个差异化：**高并发秒杀与最终一致性**、**可确认可审计的 AI 活动执行 Agent**、**活动生命周期感知的热点缓存**。
 
 完整启动、链路、接口、压测和排障信息见：[项目交接文档](docs/PROJECT_HANDOFF.md)；交给新的 AI coding agent 时同时提供：[AI 接手指令](docs/AI_BOOTSTRAP.md)。
 
@@ -112,6 +112,18 @@ AntiFraudStrategy(P0) → NewUserStrategy(P1) → DormantUserStrategy(P2) → De
   → 热度下降(连续3轮) → 降级 expireAfterWrite(5min)
 ```
 
+### 活动版本化缓存
+```
+活动发布/更新 → MySQL 保存新 version → Redis 写入完整配置快照
+  → 原子切换 coupon:detail:{id}:active 指针 → 新请求读取新版本
+
+用户详情读取：Caffeine L1 → Redis L2 版本快照 → MySQL 回源
+热点快照：逻辑过期 + 异步刷新；Redis 淘汰时由 Redisson 单飞锁重建
+实时库存/领取资格：始终走 Redis Lua，不进入本地缓存
+```
+
+活动详情缓存只保存名称、文案、活动时间和限领规则等静态配置。创建、编辑、暂停或恢复活动时会发布新的不可变快照；旧请求可读旧版本，新请求只读完整的新版本，避免配置半更新。不存在的活动会短暂缓存空值，防止重复请求穿透数据库。
+
 ### 订单一致性
 ```
 状态机: CREATED → PAYING → PAID → USED/REFUNDING → REFUNDED
@@ -130,7 +142,11 @@ AntiFraudStrategy(P0) → NewUserStrategy(P1) → DormantUserStrategy(P2) → De
 | `/api/auth/refresh` | POST | 刷新Token |
 | `/api/auth/logout` | POST | 登出 |
 | `/api/coupon/create` | POST | 创建优惠券（需登录） |
+| `/api/coupon/{couponId}` | GET | 查询活动详情（版本化 L1/L2 缓存） |
 | `/api/coupon/{couponId}` | PUT | 编辑本店优惠券、追加库存、暂停/恢复并同步 Redis（商家） |
+| `/api/coupon/{couponId}/versions` | GET | 查询活动不可变版本历史（商家） |
+| `/api/coupon/{couponId}/rollback/{version}` | POST | 回滚到历史配置并发布为新版本（商家） |
+| `/api/coupon/{couponId}/cache-status` | GET | 查询活动缓存版本、热点状态与 L1 指标（商家） |
 | `/api/product/{productId}` | PUT | 编辑本店商品、库存和上下架状态（商家） |
 | `/api/seckill/execute` | POST | 秒杀（需登录） |
 | `/api/seckill/result/{orderNo}` | GET | 查询异步秒杀订单结果（需登录且只能查本人） |
@@ -140,6 +156,10 @@ AntiFraudStrategy(P0) → NewUserStrategy(P1) → DormantUserStrategy(P2) → De
 | `/api/ai/tasks` | POST/GET | 创建执行任务 / 查询最近任务（商家） |
 | `/api/ai/tasks/{taskNo}/confirm` | POST | 确认不可变 Proposal 并执行白名单工具 |
 | `/api/ai/tasks/{taskNo}/cancel` | POST | 取消尚未执行的任务 |
+| `/api/notifications` | GET | 查询当前用户最近通知 |
+| `/api/notifications/unread` | GET | 查询未读通知数 |
+| `/api/notifications/{id}/read` | POST | 标记通知已读 |
+| `/api/notifications/read-all` | POST | 标记当前用户全部通知已读 |
 
 ## 压测
 
@@ -161,6 +181,10 @@ python3 scripts/bench.py <并发数> <请求数> <couponId>
 商家登录后可调用 `POST /api/ai/eval`，固定验证分析、风控、活动策划和普通问答四类意图，同时检查结构化字段是否完整。每次 Copilot 调用会记录商户、问题、意图、耗时和是否降级到 `ai_audit_log`，不保存完整模型原文。
 
 AI 执行台支持创建活动、追加库存、暂停活动和恢复活动。自然语言先转换为持久化 Proposal，状态为 `WAITING_CONFIRMATION`；只有当前商户确认后才调用白名单业务工具。Proposal 在确认时不会重新生成，重复确认已完成任务不会重复写数据，任务结果和动作时间线分别保存在 `ai_task`、`ai_action`。
+
+活动修改会写入 `coupon_version` 不可变快照。商家可在后台查看历史版本并回滚；回滚不是直接覆盖旧版本，而是以目标快照生成新的已发布版本。调度器每 30 秒推进活动生命周期：未开始活动自动启动，进行中活动到期自动结束，并同步 Redis Lua 执行所需状态与商家通知。
+
+秒杀请求在 Redis 原子受理后，如果 RabbitMQ 初始发布明确失败，会将 `ORDER_CREATE` 事件写入 `event_log`；扫描任务会按退避策略重投递到订单创建队列，客户端继续使用订单号轮询最终结果。达到最大重试次数后，事件被标记为终态失败并通知对应商家，保留事件编号用于人工核对。
 
 Prometheus 指标包括：
 

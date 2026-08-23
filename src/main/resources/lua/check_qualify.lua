@@ -1,16 +1,26 @@
 -- check_qualify.lua (Redis 8.x 兼容版)
 -- KEYS[1]: seckill:coupon:{couponId}
 -- KEYS[2]: seckill:user:{couponId}
+-- KEYS[3]: seckill:pending:orders (ZSET, retry schedule)
 -- ARGV[1]: userId
 -- ARGV[2]: currentTime (毫秒时间戳字符串, 同位数可字符串比较)
 -- ARGV[3]: perUserMax
+-- ARGV[4]: orderNo
+-- ARGV[5]: couponId
+-- ARGV[6]: userWeight
+-- ARGV[7]: messageTimestamp
 -- 返回: -1=不在活动时间, -2=已抢过, -3=库存不足, -4=活动已暂停, >=0=扣减后的剩余库存
 
 local couponKey = KEYS[1]
 local userSetKey = KEYS[2]
+local pendingIndexKey = KEYS[3]
 -- RedisTemplate 的 JSON 序列化器会给字符串参数加引号，先还原为原始值。
 local userId = string.gsub(ARGV[1], '^"(.*)"$', '%1')
 local currentTime = string.gsub(ARGV[2], '^"(.*)"$', '%1')
+local orderNo = string.gsub(ARGV[4], '^"(.*)"$', '%1')
+local couponId = string.gsub(ARGV[5], '^"(.*)"$', '%1')
+local userWeight = string.gsub(ARGV[6], '^"(.*)"$', '%1')
+local messageTimestamp = string.gsub(ARGV[7], '^"(.*)"$', '%1')
 
 -- 1. 活动状态与时间校验（等长字符串比较等价于数值比较）
 local status = redis.call('HGET', couponKey, 'status')
@@ -41,5 +51,21 @@ end
 redis.call('HINCRBY', couponKey, 'remain', -1)
 redis.call('HINCRBY', couponKey, 'version', 1)
 redis.call('SADD', userSetKey, userId)
+
+-- Persist the order message in Redis in the same atomic unit as stock
+-- deduction. If this process dies before publishing to RabbitMQ, the recovery
+-- scheduler will replay this pending message. Duplicate delivery is safe
+-- because consumers use orderNo for idempotency.
+local pendingOrderKey = 'seckill:pending:order:' .. orderNo
+redis.call('HSET', pendingOrderKey,
+    'order_no', orderNo,
+    'user_id', userId,
+    'coupon_id', couponId,
+    'user_weight', userWeight,
+    'timestamp', messageTimestamp,
+    'retry_count', '0',
+    'state', 'PENDING')
+redis.call('EXPIRE', pendingOrderKey, 86400)
+redis.call('ZADD', pendingIndexKey, currentTime, orderNo)
 
 return remain - 1

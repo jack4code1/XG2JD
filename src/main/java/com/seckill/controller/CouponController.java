@@ -3,6 +3,9 @@ package com.seckill.controller;
 import com.seckill.model.Coupon;
 import com.seckill.exception.ForbiddenException;
 import com.seckill.repository.CouponRepository;
+import com.seckill.service.CouponCacheService;
+import com.seckill.service.CouponVersionService;
+import com.seckill.model.CouponVersion;
 import com.seckill.repository.MerchantRepository;
 import com.seckill.util.UserContext;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +29,8 @@ public class CouponController {
     private final CouponRepository couponRepository;
     private final MerchantRepository merchantRepository;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final CouponCacheService couponCacheService;
+    private final CouponVersionService couponVersionService;
 
     /**
      * 创建优惠券活动 + 预热到 Redis
@@ -36,7 +41,7 @@ public class CouponController {
         coupon.setMerchantId(merchantRepository.findByUserId(UserContext.getUserId())
                 .orElseThrow(() -> new IllegalArgumentException("商家店铺不存在")).getId());
         coupon.setRemainStock(coupon.getTotalStock());
-        coupon.setStatus(1);
+        coupon.setStatus(coupon.getStartTime().isAfter(LocalDateTime.now()) ? 0 : 1);
         Coupon saved = couponRepository.save(coupon);
 
         String couponKey = "seckill:coupon:" + saved.getId();
@@ -46,14 +51,47 @@ public class CouponController {
         redisTemplate.opsForHash().put(couponKey, "remain", saved.getRemainStock());
         redisTemplate.opsForHash().put(couponKey, "version", 0);
         redisTemplate.opsForHash().put(couponKey, "per_user_max", saved.getPerUserMax());
-        redisTemplate.opsForHash().put(couponKey, "status", 1);
+        redisTemplate.opsForHash().put(couponKey, "status", saved.getStatus());
 
         // 数值时间戳不会被 JSON 序列化器包裹引号，Lua 可直接比较。
         redisTemplate.opsForHash().put(couponKey, "start_time",
                 saved.getStartTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
         redisTemplate.opsForHash().put(couponKey, "end_time",
                 saved.getEndTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
+        couponCacheService.publish(saved);
+        couponVersionService.record(saved, "CREATE", UserContext.getUserId());
 
+        return saved;
+    }
+
+    /** User-facing activity detail; only static configuration is cached. */
+    @GetMapping("/{couponId}")
+    public java.util.Map<String, Object> detail(@PathVariable Long couponId) {
+        java.util.Map<String, Object> detail = couponCacheService.getCouponDetail(couponId);
+        if (detail == null) throw new IllegalArgumentException("优惠券不存在");
+        return detail;
+    }
+
+    @GetMapping("/{couponId}/versions")
+    public List<CouponVersion> versions(@PathVariable Long couponId) {
+        requireMerchant();
+        ownedCoupon(couponId);
+        return couponVersionService.history(couponId);
+    }
+
+    @GetMapping("/{couponId}/cache-status")
+    public java.util.Map<String, Object> cacheStatus(@PathVariable Long couponId) {
+        requireMerchant();
+        ownedCoupon(couponId);
+        return couponCacheService.cacheStatus(couponId);
+    }
+
+    @PostMapping("/{couponId}/rollback/{version}")
+    public Coupon rollback(@PathVariable Long couponId, @PathVariable Integer version) {
+        requireMerchant();
+        Coupon saved = couponVersionService.rollback(couponId, version,
+                ownedCoupon(couponId).getMerchantId(), UserContext.getUserId());
+        syncRedis(saved);
         return saved;
     }
 
@@ -100,6 +138,8 @@ public class CouponController {
         }
         Coupon saved = couponRepository.saveAndFlush(coupon);
         syncRedis(saved);
+        couponCacheService.publish(saved);
+        couponVersionService.record(saved, "UPDATE", UserContext.getUserId());
         return saved;
     }
 

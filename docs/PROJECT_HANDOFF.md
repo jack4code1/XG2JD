@@ -123,7 +123,7 @@ Bloom Filter 只用于减少重复请求的精确查询，Redis Set 是最终判
 - RabbitMQ 队列配置死信交换机。
 - 自定义 `rabbitListenerContainerFactory` 必须通过 `SimpleRabbitListenerContainerFactoryConfigurer` 初始化，否则 `spring.rabbitmq.listener.simple.*` 的并发和 prefetch 配置不会生效。2026-08-20 JMeter 实验已发现并修复该问题。
 
-当前边界：初始秒杀消息已经有发布确认和结果轮询，但还没有把“Redis 扣减 + 初始消息”彻底合并为完整 Outbox 事务。生产环境需要进一步增加 Redis pending 记录或专用 Outbox 补偿任务，处理进程在 Redis 扣减后立即崩溃的极端窗口。
+初始秒杀消息采用 Redis pending 记录补偿：Lua 在扣减库存、标记用户的同一原子单元中写入待投递订单；发布确认成功后删除 pending 记录，确认超时、发布失败或进程在发布前崩溃时由定时任务按指数退避重投。重复投递由订单号幂等消费兜底。该方案依赖 Redis AOF 持久化；跨 Redis 集群和 MQ 的严格分布式事务仍需专用事务消息或更高层协调。
 
 ## 7. 商品支付和优惠券
 
@@ -188,7 +188,7 @@ Copilot 降级时会使用本地 MySQL / Redis 快照规则生成结果，并返
 
 执行 Agent 当前开放 4 个工具：`CREATE_CAMPAIGN`、`INCREASE_STOCK`、`PAUSE_CAMPAIGN`、`RESUME_CAMPAIGN`。每个任务保存商户归属、原始指令、Proposal、执行结果和时间戳；每个动作保存输入、状态、结果或错误。暂停状态为优惠券 `status=3`，秒杀 Lua 会在扣库存之前返回 `-4` 拦截请求。
 
-安全边界：模型不直接写数据库；高风险写操作均需 Human-in-the-loop 确认；确认时执行已保存参数，不再次调用模型改变方案；已完成任务重复确认不会重复写入。目前是单实例 `synchronized` 幂等保护，扩展为多实例时应增加数据库条件更新或分布式锁。
+安全边界：模型不直接写数据库；高风险写操作均需 Human-in-the-loop 确认；确认时执行已保存参数，不再次调用模型改变方案；已完成任务重复确认不会重复写入。确认阶段使用 `WHERE status = WAITING_CONFIRMATION` 的数据库条件更新原子抢占任务，确保多实例下只有一个执行者进入白名单工具链。
 
 ## 9. 观测指标
 

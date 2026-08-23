@@ -129,14 +129,14 @@ public class HotKeyDetector {
             }
         }
 
-        Set<String> newHotKeys = new HashSet<>();
+        Set<String> nextHotKeys = new HashSet<>();
         for (Map.Entry<String, Long> entry : totalCounts.entrySet()) {
             String key = entry.getKey();
             long totalQps = entry.getValue();
             long avgQps = totalQps / windowSeconds;
 
             if (avgQps >= thresholdQps) {
-                newHotKeys.add(key);
+                nextHotKeys.add(key);
                 coolDownCounters.remove(key); // 热度恢复，清零冷却计数
 
                 if (!hotKeys.contains(key)) {
@@ -147,17 +147,22 @@ public class HotKeyDetector {
 
         // 降级检测：原先的热点 Key 本轮未达标 → 冷却计数+1 → 连续3轮未达标则降级
         for (String hotKey : hotKeys) {
-            if (!newHotKeys.contains(hotKey)) {
+            if (!nextHotKeys.contains(hotKey)) {
                 int coolCount = coolDownCounters
                         .computeIfAbsent(hotKey, k -> new AtomicInteger())
                         .incrementAndGet();
                 if (coolCount >= 3) {
                     log.info("热点降级: key={}, coolCount={}", hotKey, coolCount);
+                    coolDownCounters.remove(hotKey);
+                } else {
+                    // Keep serving the previous hot mode during the cool-down
+                    // window to avoid oscillating at the threshold boundary.
+                    nextHotKeys.add(hotKey);
                 }
             }
         }
 
         hotKeys.clear();
-        hotKeys.addAll(newHotKeys);
+        hotKeys.addAll(nextHotKeys);
     }
 }

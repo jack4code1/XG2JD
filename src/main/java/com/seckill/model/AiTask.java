@@ -51,6 +51,9 @@ public class AiTask {
     @Column(name = "confirmed_at")
     private LocalDateTime confirmedAt;
 
+    @Column(name = "executing_at")
+    private LocalDateTime executingAt;
+
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
 

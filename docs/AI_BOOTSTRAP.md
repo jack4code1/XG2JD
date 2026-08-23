@@ -99,9 +99,9 @@ cd frontend && npm run build
 
 ## 当前已知限制
 
-- 完整 Outbox 方案尚未覆盖 Redis 扣减后进程立即崩溃的极端窗口。
+- Redis Lua 会与库存扣减一起写入 pending 订单记录；发布确认超时、失败或进程崩溃后，补偿调度器按退避策略重投，订单号幂等消费防止重复创建。
 - 支付为模拟流程。
 - AI 外部模型不可用时使用本地规则降级，评测需要区分真实模型和降级结果。
-- AI 执行任务的单实例幂等保护使用 `synchronized`；多实例部署前需改为数据库条件更新或分布式锁。
+- AI 执行任务通过数据库条件更新原子抢占 `WAITING_CONFIRMATION` 状态，支持多实例下的单执行者确认。
 - 最新性能基线使用 Apache JMeter 5.6.3 CLI；测试计划为 `scripts/jmeter/seckill-load.jmx`，夹具与脱敏汇总脚本为 `scripts/jmeter_benchmark.py`。JTL 含临时 Token，只能保存在 `target/`，不得提交。
 - 2026-08-20 同机容量上探中，200 并发满足 100% 业务成功且 P99 < 2 秒，400 并发开始出现连接拒绝。不要把受控 200 req/s 稳定性实验描述成系统最大吞吐。

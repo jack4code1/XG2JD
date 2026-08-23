@@ -6,6 +6,7 @@ import com.seckill.cache.HotKeyDetector;
 import com.seckill.config.RabbitMQConfig;
 import com.seckill.dto.OrderMessage;
 import com.seckill.dto.SeckillResponse;
+import com.seckill.scheduler.PendingOrderRecoveryScheduler;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -13,6 +14,7 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
@@ -43,6 +45,7 @@ public class SeckillService {
     private final AllocationService allocationService;
     private final HotKeyDetector hotKeyDetector;
     private final MeterRegistry meterRegistry;
+    private final StringRedisTemplate stringRedisTemplate;
 
     private final DefaultRedisScript<Long> checkQualifyScript;
 
@@ -95,10 +98,15 @@ public class SeckillService {
         String userSetKey = "seckill:user:" + couponId;
         long currentTime = Instant.now().toEpochMilli();
 
+        // The order number is allocated before Lua so the script can atomically
+        // persist a recoverable pending message with the stock deduction.
+        String orderNo = generateOrderNo();
+        long messageTimestamp = System.currentTimeMillis();
         Long qualifyResult = redisTemplate.execute(
                 checkQualifyScript,
-                List.of(couponKey, userSetKey),
-                userId.toString(), String.valueOf(currentTime), "1"
+                List.of(couponKey, userSetKey, PendingOrderRecoveryScheduler.PENDING_ORDER_INDEX),
+                userId.toString(), String.valueOf(currentTime), "1", orderNo,
+                couponId.toString(), String.valueOf(weight), String.valueOf(messageTimestamp)
         );
 
         if (qualifyResult == null || qualifyResult < 0) {
@@ -114,7 +122,6 @@ public class SeckillService {
         }
 
         // Lua 返回扣减后的剩余库存，成功后才生成订单并投递 MQ。
-        String orderNo = generateOrderNo();
         // ──── 第四层：更新进程内 Bloom Filter（仅作性能预筛） ────
         bloomFilter.put(userBloomKey);
 
@@ -125,7 +132,7 @@ public class SeckillService {
                 .couponId(couponId)
                 .amount(BigDecimal.ZERO)
                 .userWeight(weight)
-                .timestamp(System.currentTimeMillis())
+                .timestamp(messageTimestamp)
                 .build();
 
         Counter.builder("seckill.requests").tag("result", "success").register(meterRegistry).increment();
@@ -138,9 +145,10 @@ public class SeckillService {
                     correlation
             );
             var confirm = correlation.getFuture().get(2, TimeUnit.SECONDS);
-            if (confirm != null && !confirm.isAck()) {
+            if (confirm == null || !confirm.isAck()) {
                 throw new IllegalStateException("RabbitMQ 发布确认失败");
             }
+            clearPendingOrder(orderNo);
         } catch (java.util.concurrent.TimeoutException e) {
             // 超时属于结果未知，不能盲目回补库存；订单结果接口会继续等待异步落库。
             Counter.builder("seckill.mq.confirm.timeout").register(meterRegistry).increment();
@@ -148,7 +156,10 @@ public class SeckillService {
         } catch (Exception e) {
             Counter.builder("seckill.mq.publish.failure").register(meterRegistry).increment();
             log.error("RabbitMQ 发布失败: orderNo={}", orderNo, e);
-            return SeckillResponse.fail("系统繁忙，订单消息未确认，请稍后重试");
+            // Redis has already atomically accepted the claim and persisted a
+            // pending message. Return the order number so the client polls
+            // while the recovery scheduler retries delivery.
+            return SeckillResponse.ok(orderNo, weight);
         }
 
         long elapsed = System.currentTimeMillis() - startTime;
@@ -160,5 +171,10 @@ public class SeckillService {
 
     private String generateOrderNo() {
         return Instant.now().toEpochMilli() + UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    private void clearPendingOrder(String orderNo) {
+        stringRedisTemplate.opsForZSet().remove(PendingOrderRecoveryScheduler.PENDING_ORDER_INDEX, orderNo);
+        stringRedisTemplate.delete(PendingOrderRecoveryScheduler.pendingOrderKey(orderNo));
     }
 }

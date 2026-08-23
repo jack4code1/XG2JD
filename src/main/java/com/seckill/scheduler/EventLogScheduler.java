@@ -1,13 +1,20 @@
 package com.seckill.scheduler;
 
 import com.seckill.model.EventLog;
+import com.seckill.dto.OrderMessage;
+import com.seckill.config.RabbitMQConfig;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.seckill.repository.EventLogRepository;
 import com.seckill.repository.OrderRepository;
 import com.seckill.repository.CouponRepository;
+import com.seckill.repository.MerchantRepository;
 import com.seckill.repository.ProductRepository;
+import com.seckill.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
+import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -16,6 +23,8 @@ import org.springframework.data.redis.core.RedisTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 本地消息表扫描调度器 — 指数退避重试
@@ -37,6 +46,10 @@ public class EventLogScheduler {
     private final CouponRepository couponRepository;
     private final RedisTemplate<String, Object> redisTemplate;
     private final ProductRepository productRepository;
+    private final ObjectMapper objectMapper;
+    private final MerchantRepository merchantRepository;
+    private final NotificationService notificationService;
+    private final RedissonClient redissonClient;
 
     @Value("${seckill.order.expire-minutes:15}")
     private int orderExpireMinutes;
@@ -47,13 +60,29 @@ public class EventLogScheduler {
     @Scheduled(fixedDelay = 1000)
     @Transactional
     public void scanPendingEvents() {
+        var lock = redissonClient.getLock("lock:event-log-dispatch");
+        if (!lock.tryLock()) return;
+        try {
         List<EventLog> pendingEvents = eventLogRepository
                 .findByStatusAndNextRetryAtBefore(0, LocalDateTime.now());
 
         for (EventLog event : pendingEvents) {
             try {
-                // 投递到 MQ
-                rabbitTemplate.convertAndSend("order.event", event.getEventType(), event.getPayload());
+                // ORDER_CREATE is the compensating outbox for a publish that
+                // failed after Redis accepted the claim. It must be replayed
+                // to the same queue as the normal seckill path.
+                CorrelationData correlation = new CorrelationData(event.getEventId());
+                if ("ORDER_CREATE".equals(event.getEventType())) {
+                    OrderMessage message = objectMapper.readValue(event.getPayload(), OrderMessage.class);
+                    rabbitTemplate.convertAndSend(RabbitMQConfig.ORDER_CREATE_EXCHANGE,
+                            RabbitMQConfig.ORDER_CREATE_KEY, message, correlation);
+                } else {
+                    rabbitTemplate.convertAndSend("order.event", event.getEventType(), event.getPayload(), correlation);
+                }
+                var confirm = correlation.getFuture().get(2, TimeUnit.SECONDS);
+                if (confirm == null || !confirm.isAck()) {
+                    throw new IllegalStateException("RabbitMQ 发布确认失败");
+                }
                 // 标记已发送
                 event.setStatus(1);
                 eventLogRepository.save(event);
@@ -61,6 +90,9 @@ public class EventLogScheduler {
             } catch (Exception e) {
                 handleRetry(event);
             }
+        }
+        } finally {
+            if (lock.isHeldByCurrentThread()) lock.unlock();
         }
     }
 
@@ -75,6 +107,7 @@ public class EventLogScheduler {
             event.setStatus(3); // 失败终态
             log.error("事件发送失败终态: eventId={}, type={}, retryCount={}",
                     event.getEventId(), event.getEventType(), retryCount);
+            notifyTerminalFailure(event);
         } else {
             // 指数退避：1s, 2s, 4s, 8s, 16s, 32s, 64s, ... 最大 30s
             long delay = Math.min((long) Math.pow(2, retryCount - 1), 30);
@@ -88,6 +121,25 @@ public class EventLogScheduler {
     /**
      * 每分钟扫描过期订单
      */
+    /**
+     * Alert the coupon owner only after all MQ retries are exhausted; transient
+     * outages are retried silently and status=3 remains auditable for recovery.
+     */
+    private void notifyTerminalFailure(EventLog event) {
+        if (!"ORDER_CREATE".equals(event.getEventType())) return;
+        try {
+            OrderMessage message = objectMapper.readValue(event.getPayload(), OrderMessage.class);
+            couponRepository.findById(message.getCouponId()).ifPresent(coupon ->
+                    merchantRepository.findById(coupon.getMerchantId()).ifPresent(merchant ->
+                            notificationService.notify(merchant.getUserId(), "MQ_COMPENSATION_FAILED",
+                                    "抢券订单补偿失败",
+                                    "活动 " + coupon.getId() + " 的订单消息已重试 " + event.getRetryCount()
+                                            + " 次仍未投递，请按事件编号 " + event.getEventId() + " 核对。")));
+        } catch (Exception notificationError) {
+            log.error("终态事件通知创建失败: eventId={}", event.getEventId(), notificationError);
+        }
+    }
+
     @Scheduled(fixedDelay = 60_000)
     @Transactional
     public void expireOrders() {
