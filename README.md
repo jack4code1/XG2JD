@@ -1,248 +1,221 @@
-# 高并发优惠券秒杀系统
+# AI 驱动的高并发优惠券秒杀平台
 
-面向校招简历的 AI 优惠活动创建与高并发领取平台，聚焦三个差异化：**高并发秒杀与最终一致性**、**可确认可审计的 AI 活动执行 Agent**、**活动生命周期感知的热点缓存**。
+> 面向商户运营场景的优惠活动平台：商户可用自然语言生成活动草稿，在人工确认后受控执行；用户侧通过 Redis Lua 完成高并发抢券，订单异步落库并具备失败补偿能力。
 
-完整启动、链路、接口、压测和排障信息见：[项目交接文档](docs/PROJECT_HANDOFF.md)；交给新的 AI coding agent 时同时提供：[AI 接手指令](docs/AI_BOOTSTRAP.md)。
+这是一个用于展示 Java 后端工程能力的完整项目，而不只是一个秒杀接口示例。重点解决三类问题：**高并发下不超卖、不重复领**、**Redis 与 MQ 之间的投递可靠性**，以及 **AI 生成运营动作时的权限、确认与审计边界**。
+
+## 项目亮点
+
+- **AI 活动创建与受控发布**：自然语言需求被解析为包含优惠金额、库存、有效期、限领规则的结构化 Proposal；商户确认前不写业务数据，确认后仅允许创建活动、补库存、暂停、恢复等白名单动作。任务、动作和执行结果均持久化审计。
+- **Redis Lua 原子抢券**：在一次脚本调用中完成活动状态/时间窗口校验、库存扣减、一人一单判重与待投递订单记录；Bloom Filter 仅作性能预筛，Redis Set 才是最终判重依据。
+- **异步订单与可靠补偿**：Lua 原子受理后写入 Redis pending 记录；RabbitMQ publisher confirm 成功再清理。确认超时、初始投递失败或进程异常时，定时任务按指数退避重投，消费者按订单号幂等落库。
+- **活动生命周期感知缓存**：优惠券静态配置采用 Caffeine L1 + Redis L2；活动变更写入不可变版本快照，并通过 Redis 指针原子切换。热点缓存采用逻辑过期与异步刷新，库存与领取资格始终走 Redis 实时校验。
+- **并发状态控制与可观测性**：商品订单使用状态机与 JPA 乐观锁控制支付、取消、退款、核销等并发迁移；提供 Actuator、Prometheus 指标、通知中心和生命周期/补偿调度任务。
+
+## 架构概览
+
+```text
+商户自然语言需求
+        │
+        ▼
+AI Proposal（持久化） ── 人工确认 ──► 白名单运营动作 ──► 活动版本快照 / 缓存切换
+
+用户抢券请求
+        │
+        ▼
+Bloom Filter / 风控策略 ──► Redis Lua 原子校验、扣库存、判重、写 pending
+                                                       │
+                                                       ▼
+                                            RabbitMQ 异步下单
+                                                       │
+                                                       ▼
+                                      幂等消费者 ──► MySQL 订单
+                                                       ▲
+                         publisher confirm / pending 补偿重投 ──┘
+```
 
 ## 技术栈
 
-| 组件 | 版本 |
-|------|------|
-| Java | 17 |
-| Spring Boot | 3.2.0 |
-| MySQL | 8.4 |
-| Redis | 8.10 |
-| RabbitMQ | 4.3.5 |
-| Caffeine | 3.x |
-| Sentinel | 1.8.6 |
-| Redisson | 3.24.3 |
+| 模块 | 技术 |
+| --- | --- |
+| 后端 | Java 17、Spring Boot 3.2、Spring MVC、Spring Data JPA |
+| 前端 | React 19、Vite、Tailwind CSS |
+| 数据 | MySQL 8、Redis 7、Caffeine、Redisson |
+| 消息与任务 | RabbitMQ 3.12、Spring Scheduling、本地消息表 |
+| 并发与治理 | Redis Lua、Guava Bloom Filter、Sentinel、JPA `@Version` |
+| AI 与观测 | Spring AI（兼容 DeepSeek API）、Actuator、Micrometer、Prometheus |
+| 部署 | Docker Compose（应用 + MySQL + Redis + RabbitMQ） |
 
-## 快速启动
+## 快速启动（推荐 Docker Compose）
 
-### Docker Compose（推荐）
+### 前置条件
 
-Docker Compose 会启动 MySQL、Redis、RabbitMQ，并构建包含前端静态资源的应用镜像。默认使用国内 Docker Hub 代理；首次启动需要下载基础镜像，之后直接复用本地镜像和 `mysql-data` 数据卷：
+- Docker Desktop（Windows/macOS）或 Docker Engine + Compose（Linux）
+- 首次构建需要访问镜像与 Maven 依赖仓库；项目默认配置了国内 Docker 镜像代理和 Maven 镜像
+
+在仓库根目录执行：
 
 ```bash
 docker compose up -d --build
 docker compose ps
 ```
 
-切换镜像仓库时只需设置 `IMAGE_REGISTRY`，例如使用 Docker Hub 官方源：
+待 `app` 显示运行后访问：
+
+| 地址 | 用途 |
+| --- | --- |
+| `http://localhost:8080/` | Web 页面 |
+| `http://localhost:8080/api/ai/health` | 应用健康检查 |
+| `http://localhost:15672/` | RabbitMQ 管理台（`admin` / `admin123`） |
+
+查看启动日志：
 
 ```bash
-IMAGE_REGISTRY=docker.io docker compose up -d --build
+docker compose logs -f app
 ```
 
-访问 `http://localhost:8080/`；停止应用但保留数据库数据：
+停止服务但保留 MySQL 数据卷：
 
 ```bash
 docker compose down
 ```
 
-监控组件是可选的，启用后 Grafana 使用 3000 端口：
+启用 Prometheus 和 Grafana：
 
 ```bash
 docker compose --profile observability up -d
 ```
 
-### 1. 启动中间件
-```bash
-# MySQL (已通过 Homebrew 安装)
-brew services start mysql@8.4
+可选地设置环境变量以覆盖默认开发配置（PowerShell 示例）：
 
-# Redis
-brew services start redis
-
-# RabbitMQ (手动启动)
-CONF_ENV_FILE="/opt/homebrew/etc/rabbitmq/rabbitmq-env.conf" \
-  /opt/homebrew/opt/rabbitmq/sbin/rabbitmq-server -detached
-
-# 创建 admin 用户
-rabbitmqctl add_user admin admin123
-rabbitmqctl set_user_tags admin administrator
-rabbitmqctl set_permissions -p / admin ".*" ".*" ".*"
+```powershell
+$env:DEEPSEEK_API_KEY = "你的 API Key"
+$env:JWT_SECRET = "不少于 32 字符的随机密钥"
+docker compose up -d --build
 ```
 
-### 2. 初始化数据库
-```bash
-mysql -u root -proot123 -h 127.0.0.1 -P 3306 < src/main/resources/sql/init.sql
-```
+> 默认密码仅用于本地开发。生产部署请通过环境变量设置数据库、RabbitMQ、JWT 和 AI 密钥；`prod` Profile 会拒绝示例默认密钥。
 
-### 3. 构建运行
-```bash
-mvn package -DskipTests
-java -jar target/seckill-coupon-1.0.0.jar
-```
+## 演示账号
 
-### 本地测试账号
+初始化数据中所有账号密码均为 `123456`。
 
-执行 `mysql -u root -proot123 -h 127.0.0.1 -P 3306 < src/main/resources/sql/test-data.sql` 可重置为以下数据，密码均为 `123456`：
-
-重置后执行 `redis-cli FLUSHDB`，再启动后端并为进行中的优惠券预热 Redis。
-
-| 类型 | 账号 | 店铺 |
-|------|------|------|
+| 角色 | 账号 | 店铺 |
+| --- | --- | --- |
 | 商户 | `merchant_food` | 火焰小食铺 |
 | 商户 | `merchant_fashion` | 拾光衣橱 |
 | 用户 | `test_user` | - |
 | 用户 | `test_user_2` | - |
-| 用户 | `test_user_3` | - |
 
-## 核心架构
+## 核心设计
 
-### 秒杀全链路（5层漏斗 + 原子提交）
-```
-Bloom Filter 预筛 → 策略权重计算 → Lua原子校验/扣库存/标记用户 → MQ异步下单 → 结果轮询
-    性能预筛          4策略链              单脚本提交            削峰落库       CREATED/失败
-```
+### 1. Redis Lua：库存正确性与一人一单
 
-秒杀 Lua 脚本将活动时间校验、一人一单校验、库存扣减和用户标记放在同一次 Redis 原子执行中，避免并发请求在“检查”和“标记”之间产生重复订单。Bloom Filter 只承担性能预筛，Redis Set 是最终一致性判断依据。
+抢券脚本把下列步骤放在同一个 Redis 原子单元中：
 
-### 策略链
-```
-AntiFraudStrategy(P0) → NewUserStrategy(P1) → DormantUserStrategy(P2) → DefaultStrategy
-   ZSET滑动窗口          新用户+50权重          沉睡用户+30权重           先到先得+100
-```
+1. 校验活动状态和有效时间窗口；
+2. 使用 Redis Set 做最终一人一单判重；
+3. 校验并扣减库存；
+4. 写入用户领取标记；
+5. 写入带唯一订单号的 pending 记录，并加入待投递索引。
 
-### 热点发现
-```
-环形缓冲区 [12槽 × 5s = 60s窗口]
-  → 热点判定(QPS>100) → Caffeine 升级 refreshAfterWrite(30s)
-  → 热度下降(连续3轮) → 降级 expireAfterWrite(5min)
-```
+因此并发请求不会在“检查库存”和“扣减库存”之间穿插。Bloom Filter 只减少明显重复请求的后续查询，不参与最终正确性判定。
 
-### 活动版本化缓存
-```
-活动发布/更新 → MySQL 保存新 version → Redis 写入完整配置快照
-  → 原子切换 coupon:detail:{id}:active 指针 → 新请求读取新版本
+### 2. Redis → MQ 的投递空窗补偿
 
-用户详情读取：Caffeine L1 → Redis L2 版本快照 → MySQL 回源
-热点快照：逻辑过期 + 异步刷新；Redis 淘汰时由 Redisson 单飞锁重建
-实时库存/领取资格：始终走 Redis Lua，不进入本地缓存
-```
-
-活动详情缓存只保存名称、文案、活动时间和限领规则等静态配置。创建、编辑、暂停或恢复活动时会发布新的不可变快照；旧请求可读旧版本，新请求只读完整的新版本，避免配置半更新。不存在的活动会短暂缓存空值，防止重复请求穿透数据库。
-
-### 订单一致性
-```
-状态机: CREATED → PAYING → PAID → USED/REFUNDING → REFUNDED
-         ↓         ↓
-      CANCELED / EXPIRED(15min)
-
-本地消息表 + 指数退避(1s→2s→4s…→30s) + @Version乐观锁 + T+1对账
-```
-
-## API 文档
-
-| 接口 | 方法 | 说明 |
-|------|------|------|
-| `/api/auth/register` | POST | 注册 |
-| `/api/auth/login` | POST | 登录 |
-| `/api/auth/refresh` | POST | 刷新Token |
-| `/api/auth/logout` | POST | 登出 |
-| `/api/coupon/create` | POST | 创建优惠券（需登录） |
-| `/api/coupon/{couponId}` | GET | 查询活动详情（版本化 L1/L2 缓存） |
-| `/api/coupon/{couponId}` | PUT | 编辑本店优惠券、追加库存、暂停/恢复并同步 Redis（商家） |
-| `/api/coupon/{couponId}/versions` | GET | 查询活动不可变版本历史（商家） |
-| `/api/coupon/{couponId}/rollback/{version}` | POST | 回滚到历史配置并发布为新版本（商家） |
-| `/api/coupon/{couponId}/cache-status` | GET | 查询活动缓存版本、热点状态与 L1 指标（商家） |
-| `/api/product/{productId}` | PUT | 编辑本店商品、库存和上下架状态（商家） |
-| `/api/seckill/execute` | POST | 秒杀（需登录） |
-| `/api/seckill/result/{orderNo}` | GET | 查询异步秒杀订单结果（需登录且只能查本人） |
-| `/api/order/{orderNo}` | GET | 查询订单 |
-| `/api/ai/eval` | POST | 运行 4 条 Copilot 固定评测问题（商家） |
-| `/api/ai/audits` | GET | 查询当前商户最近 20 次 AI 调用审计 |
-| `/api/ai/tasks` | POST/GET | 创建执行任务 / 查询最近任务（商家） |
-| `/api/ai/tasks/{taskNo}/confirm` | POST | 确认不可变 Proposal 并执行白名单工具 |
-| `/api/ai/tasks/{taskNo}/cancel` | POST | 取消尚未执行的任务 |
-| `/api/notifications` | GET | 查询当前用户最近通知 |
-| `/api/notifications/unread` | GET | 查询未读通知数 |
-| `/api/notifications/{id}/read` | POST | 标记通知已读 |
-| `/api/notifications/read-all` | POST | 标记当前用户全部通知已读 |
-
-## 压测
-
-```bash
-# 生成压测用户
-python3 -c "..."  # 见 scripts/bench.py
-
-# 纯秒杀压测
-python3 scripts/bench_pure.py <couponId> <并发数> <请求数>
-
-# 含登录的完整压测
-python3 scripts/bench.py <并发数> <请求数> <couponId>
-```
-
-纯秒杀压测脚本会输出成功数、Redis 剩余库存和重复订单号数量。库存为 `N` 时，成功订单数不应超过 `N`，重复订单号应为 `0`。执行前请确认优惠券活动时间有效，并准备 `/tmp/seckill_tokens.txt`。
-
-### AI 评测与观测
-
-商家登录后可调用 `POST /api/ai/eval`，固定验证分析、风控、活动策划和普通问答四类意图，同时检查结构化字段是否完整。每次 Copilot 调用会记录商户、问题、意图、耗时和是否降级到 `ai_audit_log`，不保存完整模型原文。
-
-AI 执行台支持创建活动、追加库存、暂停活动和恢复活动。自然语言先转换为持久化 Proposal，状态为 `WAITING_CONFIRMATION`；只有当前商户确认后才调用白名单业务工具。Proposal 在确认时不会重新生成，重复确认已完成任务不会重复写数据，任务结果和动作时间线分别保存在 `ai_task`、`ai_action`。
-
-活动修改会写入 `coupon_version` 不可变快照。商家可在后台查看历史版本并回滚；回滚不是直接覆盖旧版本，而是以目标快照生成新的已发布版本。调度器每 30 秒推进活动生命周期：未开始活动自动启动，进行中活动到期自动结束，并同步 Redis Lua 执行所需状态与商家通知。
-
-秒杀请求在 Redis 原子受理后，如果 RabbitMQ 初始发布明确失败，会将 `ORDER_CREATE` 事件写入 `event_log`；扫描任务会按退避策略重投递到订单创建队列，客户端继续使用订单号轮询最终结果。达到最大重试次数后，事件被标记为终态失败并通知对应商家，保留事件编号用于人工核对。
-
-Prometheus 指标包括：
+Redis 原子扣库存后，如果进程在发送 MQ 前崩溃，单纯依赖 publisher confirm 仍会丢失订单。这里采用 pending 记录补齐该空窗：
 
 ```text
-seckill_requests_total{result="success"}
-seckill_mq_confirm_timeout_total
-seckill_mq_publish_failure_total
-ai_copilot_requests_total
-ai_copilot_degraded_total
+Lua 原子扣减 + 写 pending
+        │
+        ├── RabbitMQ 确认成功 ──► 删除 pending
+        └── 失败 / 超时 / 崩溃 ──► 调度器指数退避重投 ──► 幂等消费者落库
 ```
 
-RabbitMQ 开启 correlated publisher confirm；消费者继续使用订单号幂等，发布确认超时时保留订单结果轮询，不盲目回补库存，避免“消息已到达但确认包延迟”造成重复库存。
+重投任务使用分布式锁避免多实例重复扫描；达到最大次数后记录终态并通知商户，保留订单号用于人工核对。
 
-### 压测结果
+### 3. 活动配置与实时数据分治
+
+```text
+优惠券静态规则：Caffeine L1 → Redis L2 版本快照 → MySQL
+热点规则：逻辑过期 + 异步刷新 + Redisson 单飞重建
+实时库存/资格：Redis Lua（不走本地缓存）
 ```
-JMeter 200 并发稳定性实验（10 分钟 / 120,000 请求）：199.89 req/s，P99 104ms，成功率 100%
-JMeter 并发阶梯（50/100/200/400 并发，各 1,200 请求）：全部成功，0 重复订单
-JMeter 售罄实验（库存 100 / 请求 1,000）：成功 100，库存 0，无超卖
-JMeter 同用户竞争（100 并发 / 请求 100）：成功 1，库存仅扣减 1
-容量上探：200 并发满足 100% 成功且 P99<2s；400 并发开始连接饱和，800 并发错误率 4.95%
+
+活动修改不会直接覆盖缓存对象：先落库生成不可变 `coupon_version` 快照，再原子切换 Redis active 指针。请求只会读取旧完整版本或新完整版本，避免看到半更新配置。
+
+### 4. AI 执行边界
+
+```text
+自然语言 → 结构化 Proposal → 商户确认 → 条件更新抢占执行权 → 白名单工具调用 → 审计/通知
 ```
 
-以上为 i7-12650H、15.8GB 内存、本机 Docker 中间件、单应用实例且 JMeter 同机运行的实测结果。120,000 个稳定性实验订单在 MQ 清空后全部落库且订单号唯一。详细方法、Python 历史数据、JMeter 5.6.3 数据、容量边界和复现命令见：[并发实验报告](docs/BENCHMARK_REPORT.md)。
+- Proposal 在确认前仅保存，不直接执行；
+- 确认接口通过条件更新抢占任务，避免多实例或重复点击重复执行；
+- 长时间卡在执行中的 AI 任务会被恢复调度器标记为待人工处理；
+- AI 调用审计仅记录必要元数据，不保存完整模型原文。
 
-## 故障演练
+## 关键接口
+
+| 接口 | 方法 | 说明 |
+| --- | --- | --- |
+| `/api/auth/login` | `POST` | 登录并获取 JWT |
+| `/api/coupon/{couponId}` | `GET` | 查询活动详情（版本化分层缓存） |
+| `/api/seckill/execute` | `POST` | 发起抢券，返回订单号用于轮询 |
+| `/api/seckill/result/{orderNo}` | `GET` | 查询异步下单结果（仅本人） |
+| `/api/ai/tasks` | `POST` / `GET` | 创建与查询 AI 运营任务（商户） |
+| `/api/ai/tasks/{taskNo}/confirm` | `POST` | 人工确认并执行 Proposal（商户） |
+| `/api/coupon/{couponId}/versions` | `GET` | 查询活动版本历史（商户） |
+| `/api/coupon/{couponId}/rollback/{version}` | `POST` | 基于历史快照发布新版本（商户） |
+| `/api/notifications` | `GET` | 查询当前用户通知 |
+
+完整接口与排障说明见 [项目交接文档](docs/PROJECT_HANDOFF.md)。
+
+## 本地开发（不使用 Docker）
+
+需要本机启动 MySQL、Redis、RabbitMQ，并导入初始化脚本：
 
 ```bash
-# Redis 宕机
-brew services stop redis; sleep 10; brew services start redis
+# 导入数据库（按本机账号和端口调整）
+mysql -u root -proot123 -h 127.0.0.1 -P 3306 < src/main/resources/sql/init.sql
 
-# MQ 积压
-rabbitmqctl stop_app; sleep 5; rabbitmqctl start_app
-
-# DB 慢查询
-mysql -u root -proot123 -h 127.0.0.1 -e "SELECT SLEEP(10)" &
+# 后端构建与启动
+mvn -DskipTests package
+java -jar target/seckill-coupon-1.0.0.jar
 ```
 
-详见 `fault-drill-report.md`
+前端开发服务器：
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
 ## 项目结构
 
-```
+```text
 src/main/java/com/seckill/
-├── cache/          # 热点发现 + 缓存管理
-├── config/         # Redis/RabbitMQ/Sentinel/WebMvc
-├── controller/     # REST API
-├── dto/            # 请求/响应对象
-├── model/          # JPA 实体 + 状态机枚举
-├── repository/     # JPA Repository
-├── scheduler/      # 定时任务（消息表扫描/订单过期）
-├── service/        # 核心业务逻辑
-├── strategy/       # 智能分配策略（策略模式）
-└── util/           # JWT/UserContext/DeviceFingerprint
+├── cache/       # 分层缓存、热点探测、版本快照
+├── config/      # Redis、RabbitMQ、鉴权、监控配置
+├── controller/  # REST API
+├── model/       # JPA 实体、订单状态机
+├── scheduler/   # 活动生命周期、pending 订单、AI 任务恢复、消息补偿
+├── service/     # 秒杀、订单、AI 执行、通知等核心业务
+├── strategy/    # 风控和用户分配策略链
+└── util/        # JWT、用户上下文、设备指纹
+
+src/main/resources/
+├── lua/check_qualify.lua  # 原子抢券脚本
+└── sql/                   # 初始化与演示数据
 ```
 
-## 踩坑记录
+## 进一步阅读
 
-1. **Redis 8.x Lua 兼容性**：`tonumber(HGET ...)` 返回值精度异常，使用 `HINCRBY key field 0` 读取整数字段 + 等长字符串比较时间戳
-2. **RabbitMQ 4.x 消费者**：必须显式配置 `Jackson2JsonMessageConverter` + `RabbitListenerContainerFactory`，否则消息反序列化失败进 DLQ
-3. **MySQL 8.4 Homebrew**：默认不开启 TCP 端口，需确认 `bind-address = 127.0.0.1` 且无 `skip-networking`
-4. **Redis Hash 整数字段**：`opsForHash().put(key, field, int)` 存为 Redis Integer，`putAll(Map)` 全部存为 String
+- [项目交接文档](docs/PROJECT_HANDOFF.md)：完整链路、配置、排障说明
+- [并发实验报告](docs/BENCHMARK_REPORT.md)：压测方法与历史实验记录
+- [AI 接手指令](docs/AI_BOOTSTRAP.md)：面向后续维护者的上下文说明
+
+---
+
+如果这个项目对你有帮助，欢迎 Star。也欢迎在 Issue 中讨论并发一致性、缓存更新和 AI 受控执行的实现细节。
