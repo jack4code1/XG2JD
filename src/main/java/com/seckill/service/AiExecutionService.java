@@ -11,12 +11,10 @@ import com.seckill.repository.AiTaskRepository;
 import com.seckill.repository.CouponRepository;
 import com.seckill.repository.MerchantRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -47,7 +45,7 @@ public class AiExecutionService {
     private final CouponVersionService couponVersionService;
     private final NotificationService notificationService;
     private final MerchantRepository merchantRepository;
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final CouponSeckillStateService couponSeckillStateService;
     private final AgentOrchestrator orchestrator;
     private final ObjectMapper objectMapper;
 
@@ -245,7 +243,7 @@ public class AiExecutionService {
         try {
             warmup(coupon);
         } catch (RuntimeException e) {
-            redisTemplate.delete(couponKey(coupon.getId()));
+            couponSeckillStateService.clear(coupon);
             couponRepository.deleteById(coupon.getId());
             throw e;
         }
@@ -264,12 +262,12 @@ public class AiExecutionService {
         coupon.setRemainStock(oldRemain + amount);
         coupon = couponRepository.saveAndFlush(coupon);
         try {
-            syncMutableFields(coupon);
+            syncMutableFields(coupon, true);
         } catch (RuntimeException e) {
             coupon.setTotalStock(oldTotal);
             coupon.setRemainStock(oldRemain);
             couponRepository.saveAndFlush(coupon);
-            syncMutableFields(coupon);
+            syncMutableFields(coupon, true);
             throw e;
         }
         couponVersionService.record(coupon, "AI_INCREASE_STOCK", null);
@@ -287,12 +285,12 @@ public class AiExecutionService {
         }
         coupon = couponRepository.saveAndFlush(coupon);
         try {
-            syncMutableFields(coupon);
+            syncMutableFields(coupon, false);
         } catch (RuntimeException e) {
             coupon.setStatus(oldStatus);
             coupon.setEndTime(oldEnd);
             couponRepository.saveAndFlush(coupon);
-            syncMutableFields(coupon);
+            syncMutableFields(coupon, false);
             throw e;
         }
         couponVersionService.record(coupon, pause ? "AI_PAUSE" : "AI_RESUME", null);
@@ -333,26 +331,13 @@ public class AiExecutionService {
     }
 
     private void warmup(Coupon coupon) {
-        String key = couponKey(coupon.getId());
-        redisTemplate.opsForHash().put(key, "total", coupon.getTotalStock());
-        redisTemplate.opsForHash().put(key, "remain", coupon.getRemainStock());
-        redisTemplate.opsForHash().put(key, "version", coupon.getVersion() == null ? 0 : coupon.getVersion());
-        redisTemplate.opsForHash().put(key, "per_user_max", coupon.getPerUserMax());
-        redisTemplate.opsForHash().put(key, "status", coupon.getStatus());
-        redisTemplate.opsForHash().put(key, "start_time", epoch(coupon.getStartTime()));
-        redisTemplate.opsForHash().put(key, "end_time", epoch(coupon.getEndTime()));
+        couponSeckillStateService.initialize(coupon);
         couponCacheService.publish(coupon);
     }
 
-    private void syncMutableFields(Coupon coupon) {
-        String key = couponKey(coupon.getId());
-        if (!Boolean.TRUE.equals(redisTemplate.hasKey(key))) warmup(coupon);
-        else {
-            redisTemplate.opsForHash().put(key, "total", coupon.getTotalStock());
-            redisTemplate.opsForHash().put(key, "remain", coupon.getRemainStock());
-            redisTemplate.opsForHash().put(key, "status", coupon.getStatus());
-            redisTemplate.opsForHash().put(key, "end_time", epoch(coupon.getEndTime()));
-        }
+    private void syncMutableFields(Coupon coupon, boolean replaceStock) {
+        couponSeckillStateService.syncActivity(coupon);
+        if (replaceStock) couponSeckillStateService.replaceStock(coupon);
         couponCacheService.publish(coupon);
     }
 
@@ -417,12 +402,6 @@ public class AiExecutionService {
     private String safeMessage(Exception e) {
         return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
     }
-
-    private long epoch(LocalDateTime value) {
-        return value.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
-    }
-
-    private String couponKey(Long id) { return "seckill:coupon:" + id; }
 
     private void notifyMerchant(Long merchantId, String type, String title, String content) {
         merchantRepository.findById(merchantId)

@@ -26,6 +26,19 @@ public class CacheSyncConsumer {
     private final RedisTemplate<String, Object> redisTemplate;
     private final HotKeyCacheManager hotKeyCacheManager;
 
+    /** Clears only process-local Caffeine entries; L2 is owned by the writer. */
+    @SuppressWarnings("unchecked")
+    @RabbitListener(queues = "#{cacheInvalidationQueue.name}")
+    public void handleCacheInvalidation(Map<String, Object> message) {
+        Object keys = message.get("cacheKeys");
+        if (!(keys instanceof java.util.Collection<?> cacheKeys)) {
+            log.warn("忽略缺少 cacheKeys 的缓存失效消息");
+            return;
+        }
+        cacheKeys.stream().map(String::valueOf).forEach(hotKeyCacheManager::evict);
+        log.debug("已清除本地缓存: keys={}", cacheKeys);
+    }
+
     @SuppressWarnings("unchecked")
     @RabbitListener(queues = RabbitMQConfig.CACHE_SYNC_QUEUE)
     public void handleCacheSync(Map<String, Object> message) {

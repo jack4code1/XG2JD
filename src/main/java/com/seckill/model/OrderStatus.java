@@ -12,7 +12,9 @@ import java.util.Set;
  */
 public enum OrderStatus {
 
-    CREATED(Set.of("PAYING", "CANCELED", "EXPIRED")),
+    /** Coupon claims retain CREATED; product purchases start at PENDING_PAYMENT. */
+    CREATED(Set.of("CANCELED", "EXPIRED")),
+    PENDING_PAYMENT(Set.of("PAYING", "CANCELED", "EXPIRED")),
     PAYING(Set.of("PAID", "CANCELED")),
     PAID(Set.of("USED", "REFUNDING")),
     USED(Set.of()),

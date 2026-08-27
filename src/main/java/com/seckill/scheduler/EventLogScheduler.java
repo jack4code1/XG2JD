@@ -10,6 +10,7 @@ import com.seckill.repository.CouponRepository;
 import com.seckill.repository.MerchantRepository;
 import com.seckill.repository.ProductRepository;
 import com.seckill.service.NotificationService;
+import com.seckill.service.CouponSeckillStateService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -19,7 +20,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.data.redis.core.RedisTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -44,7 +44,7 @@ public class EventLogScheduler {
     private final OrderRepository orderRepository;
     private final RabbitTemplate rabbitTemplate;
     private final CouponRepository couponRepository;
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final CouponSeckillStateService couponSeckillStateService;
     private final ProductRepository productRepository;
     private final ObjectMapper objectMapper;
     private final MerchantRepository merchantRepository;
@@ -145,14 +145,13 @@ public class EventLogScheduler {
     public void expireOrders() {
         LocalDateTime expireTime = LocalDateTime.now().minusMinutes(orderExpireMinutes);
         List<com.seckill.model.Order> orders = orderRepository
-                .findByStatusAndCreatedAtBefore("CREATED", expireTime);
+                .findByStatusAndCreatedAtBefore("PENDING_PAYMENT", expireTime);
         for (com.seckill.model.Order order : orders) {
             if (!"PRODUCT_PURCHASE".equals(order.getOrderType())) continue;
             order.setStatus("EXPIRED");
             orderRepository.save(order);
             if ("COUPON_CLAIM".equals(order.getOrderType()) && couponRepository.incrementRemainStock(order.getCouponId()) == 1) {
-                redisTemplate.opsForHash().increment(
-                        "seckill:coupon:" + order.getCouponId(), "remain", 1);
+                couponSeckillStateService.restoreStock(order.getCouponId());
             } else if ("PRODUCT_PURCHASE".equals(order.getOrderType()) && order.getProductId() != null) {
                 productRepository.incrementRemainStock(order.getProductId());
             }

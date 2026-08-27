@@ -1,0 +1,10 @@
+services:
+  mysql:
+    container_name: seckill-perf-mysql
+    ports: !override
+      - "13306:3306"
+    volumes:
+      - perf-mysql-data:/var/lib/mysql
+
+volumes:
+  perf-mysql-data:

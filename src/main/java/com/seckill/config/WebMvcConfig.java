@@ -1,5 +1,6 @@
 package com.seckill.config;
 
+import com.seckill.interceptor.AuthInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;

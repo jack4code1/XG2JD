@@ -28,7 +28,7 @@ public class JwtUtil {
     @Value("${seckill.jwt.access-expire-minutes:30}")
     private int accessExpireMinutes;
 
-    public JwtUtil(@Value("${seckill.jwt.secret:seckill-coupon-default-secret-key-min-32-bytes!}") String secret) {
+    public JwtUtil(@Value("${seckill.jwt.secret}") String secret) {
         this.secretKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 

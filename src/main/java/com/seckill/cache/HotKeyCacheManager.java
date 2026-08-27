@@ -8,11 +8,15 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 
+import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 /**
  * 热点缓存管理器 — 动态升降级
@@ -28,8 +32,12 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class HotKeyCacheManager {
 
+    /** Result of a single Caffeine lookup and any L2 snapshot lookup it performed. */
+    public record CacheLookup<T>(T value, boolean caffeineHit, int redisSnapshotReads, int redisSnapshotHits) {}
+
     private final RedisTemplate<String, Object> redisTemplate;
     private final HotKeyDetector hotKeyDetector;
+    private final RedissonClient redissonClient;
 
     /** NORMAL 模式缓存：适用冷数据 */
     private Cache<String, Object> normalCache;
@@ -70,13 +78,38 @@ public class HotKeyCacheManager {
      */
     @SuppressWarnings("unchecked")
     public <T> T get(String key, String hotKey, Class<T> type) {
+        return get(key, hotKey, type, () -> null);
+    }
+
+    /**
+     * Reads a cache entry and, for a logically expired hot value, refreshes it
+     * asynchronously with a distributed single-flight lock.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> T get(String key, String hotKey, Class<T> type, Supplier<CacheValue<T>> refreshLoader) {
+        return getWithLookup(key, hotKey, type, refreshLoader).value();
+    }
+
+    public <T> T get(String key, String hotKey, Supplier<CacheValue<T>> refreshLoader) {
+        return getWithLookup(key, hotKey, null, refreshLoader).value();
+    }
+
+    public <T> CacheLookup<T> getWithLookup(String key, String hotKey, Supplier<CacheValue<T>> refreshLoader) {
+        return getWithLookup(key, hotKey, null, refreshLoader);
+    }
+
+    /**
+     * Same cache behavior as {@link #get(String, String, Supplier)}, plus
+     * enough path information for the perf profile to count real L1/L2 work.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> CacheLookup<T> getWithLookup(String key, String hotKey, Class<T> type,
+                                             Supplier<CacheValue<T>> refreshLoader) {
         if (hotKeyDetector.isHot(hotKey)) {
-            return getFromHotCache(key, type);
+            return getFromHotCacheWithLookup(key, type, refreshLoader);
         }
-        // The detector kept the key hot for its three-cycle cool-down window.
-        // Once it finally demotes the key, release the dedicated hot cache.
         hotCaches.remove(key);
-        return getFromNormalCache(key, type);
+        return getFromNormalCacheWithLookup(key, type);
     }
 
     /**
@@ -84,56 +117,65 @@ public class HotKeyCacheManager {
      */
     @SuppressWarnings("unchecked")
     private <T> T getFromNormalCache(String key, Class<T> type) {
+        return getFromNormalCacheWithLookup(key, type).value();
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> CacheLookup<T> getFromNormalCacheWithLookup(String key, Class<T> type) {
         Object value = normalCache.getIfPresent(key);
         if (value != null) {
-            return (T) value;
+            return new CacheLookup<>((T) unwrap(value), true, 0, 0);
         }
         // 回源 Redis
         Object redisValue = redisTemplate.opsForValue().get(key);
         if (redisValue != null) {
             normalCache.put(key, redisValue);
-            return (T) redisValue;
+            return new CacheLookup<>((T) unwrap(redisValue), false, 1, 1);
         }
-        return null;
+        return new CacheLookup<>(null, false, 1, 0);
     }
 
     /**
      * HOT 模式读取：Caffeine(CacheValue) → 逻辑过期判定 → 旧值兜底 + 异步刷新
      */
     @SuppressWarnings("unchecked")
-    private <T> T getFromHotCache(String key, Class<T> type) {
+    private <T> T getFromHotCache(String key, Class<T> type, Supplier<CacheValue<T>> refreshLoader) {
+        return getFromHotCacheWithLookup(key, type, refreshLoader).value();
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> CacheLookup<T> getFromHotCacheWithLookup(String key, Class<T> type,
+                                                          Supplier<CacheValue<T>> refreshLoader) {
         // 获取或创建 hotCache（使用 computeIfAbsent 保证只赋值一次）
-        final Cache<String, CacheValue<?>> hotCache = hotCaches.computeIfAbsent(key, k -> {
-            Cache<String, CacheValue<?>> newCache = createHotCache();
-            // 预热：从 Redis 加载
-            Object redisValue = redisTemplate.opsForValue().get(key);
-            if (redisValue != null) {
-                CacheValue<Object> cv = CacheValue.builder()
-                        .data(redisValue)
-                        .logicExpireTime(System.currentTimeMillis() + 30_000)
-                        .physicalExpireTime(System.currentTimeMillis() + 600_000)
-                        .build();
-                newCache.put(key, cv);
+        Cache<String, CacheValue<?>> hotCache = hotCaches.get(key);
+        if (hotCache == null) {
+            Cache<String, CacheValue<?>> candidate = createHotCache();
+            Cache<String, CacheValue<?>> existing = hotCaches.putIfAbsent(key, candidate);
+            if (existing == null) {
+                Object redisValue = redisTemplate.opsForValue().get(key);
+                if (redisValue != null) candidate.put(key, toCacheValue(redisValue));
+                CacheValue<?> loaded = candidate.getIfPresent(key);
+                if (loaded != null && loaded.isLogicallyExpired()) {
+                    rebuildExecutor.submit(() -> refreshHotCache(key, candidate, refreshLoader));
+                }
+                return new CacheLookup<>(loaded == null ? null : (T) loaded.getData(), false, 1,
+                        redisValue == null ? 0 : 1);
             }
-            return newCache;
-        });
+            hotCache = existing;
+        }
 
         CacheValue<?> cacheValue = hotCache.getIfPresent(key);
         if (cacheValue == null) {
-            return null;
+            return new CacheLookup<>(null, false, 0, 0);
         }
 
         // 逻辑过期 → 返回旧值 + 异步刷新
         if (cacheValue.isLogicallyExpired()) {
-            rebuildExecutor.submit(() -> refreshHotCache(key, hotCache));
-            // 物理过期兜底 → 必须重建
-            if (cacheValue.isPhysicallyExpired()) {
-                Object fresh = redisTemplate.opsForValue().get(key);
-                return fresh != null ? (T) fresh : (T) cacheValue.getData();
-            }
+            Cache<String, CacheValue<?>> cacheForRefresh = hotCache;
+            rebuildExecutor.submit(() -> refreshHotCache(key, cacheForRefresh, refreshLoader));
         }
 
-        return (T) cacheValue.getData();
+        return new CacheLookup<>((T) cacheValue.getData(), true, 0, 0);
     }
 
     /**
@@ -170,26 +212,49 @@ public class HotKeyCacheManager {
     private Cache<String, CacheValue<?>> createHotCache() {
         return Caffeine.newBuilder()
                 .maximumSize(100)
-                .refreshAfterWrite(30, TimeUnit.SECONDS)
                 .expireAfterWrite(10, TimeUnit.MINUTES)
                 .recordStats()
                 .build();
     }
 
-    private void refreshHotCache(String key, Cache<String, CacheValue<?>> hotCache) {
+    private <T> void refreshHotCache(String key, Cache<String, CacheValue<?>> hotCache,
+                                     Supplier<CacheValue<T>> refreshLoader) {
+        RLock lock = redissonClient.getLock("lock:cache:refresh:" + key);
+        boolean locked = false;
         try {
-            Object fresh = redisTemplate.opsForValue().get(key);
+            locked = lock.tryLock();
+            if (!locked) {
+                return;
+            }
+            CacheValue<T> fresh = refreshLoader.get();
             if (fresh != null) {
-                CacheValue<Object> cv = CacheValue.builder()
-                        .data(fresh)
-                        .logicExpireTime(System.currentTimeMillis() + 30_000)
-                        .physicalExpireTime(System.currentTimeMillis() + 600_000)
-                        .build();
-                hotCache.put(key, cv);
+                hotCache.put(key, fresh);
                 log.debug("热点缓存刷新: key={}", key);
             }
         } catch (Exception e) {
             log.error("热点缓存刷新失败: key={}", key, e);
+        } finally {
+            if (locked && lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
         }
+    }
+
+    private Object unwrap(Object value) {
+        return value instanceof CacheValue<?> cacheValue ? cacheValue.getData() : value;
+    }
+
+    @SuppressWarnings("unchecked")
+    private CacheValue<?> toCacheValue(Object redisValue) {
+        if (redisValue instanceof CacheValue<?> cacheValue) {
+            return cacheValue;
+        }
+        // Normal lifecycle entries have Redis TTL and must not trigger a
+        // logical-expiry refresh merely because the key becomes hot later.
+        return CacheValue.builder()
+                .data(redisValue)
+                .logicExpireTime(Long.MAX_VALUE)
+                .physicalExpireTime(System.currentTimeMillis() + Duration.ofMinutes(10).toMillis())
+                .build();
     }
 }

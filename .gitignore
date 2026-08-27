@@ -1,4 +1,8 @@
 target/
+performance-test/data/*
+!performance-test/data/.gitkeep
+performance-test/results/*
+!performance-test/results/.gitkeep
 *.class
 *.jar
 *.log

@@ -8,8 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class OrderStatusTest {
 
     @Test
-    void createdCanBePaidOrCanceled() {
-        assertDoesNotThrow(() -> OrderStatus.validateTransition("CREATED", "PAYING"));
+    void pendingPaymentCanBePaidOrCanceled() {
+        assertDoesNotThrow(() -> OrderStatus.validateTransition("PENDING_PAYMENT", "PAYING"));
         assertDoesNotThrow(() -> OrderStatus.validateTransition("CREATED", "CANCELED"));
     }
 

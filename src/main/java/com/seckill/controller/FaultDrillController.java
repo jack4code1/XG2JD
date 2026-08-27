@@ -1,5 +1,6 @@
 package com.seckill.controller;
 
+import com.seckill.common.Result;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
@@ -28,23 +29,23 @@ public class FaultDrillController {
      * 标记故障开始
      */
     @PostMapping("/start")
-    public Map<String, Object> startDrill(@RequestParam String scenario) {
+    public Result<Map<String, Object>> startDrill(@RequestParam String scenario) {
         requireMerchant();
         currentScenario = scenario;
         injectTime = Instant.now().toEpochMilli();
         log.warn("=== 故障演练开始: scenario={}, time={} ===", scenario, injectTime);
-        return Map.of(
+        return Result.ok(Map.of(
             "scenario", scenario,
             "injectTime", injectTime,
             "message", "请在终端执行: ./scripts/fault-inject.sh " + scenario
-        );
+        ));
     }
 
     /**
      * 标记故障恢复
      */
     @PostMapping("/recover")
-    public Map<String, Object> recoverDrill() {
+    public Result<Map<String, Object>> recoverDrill() {
         requireMerchant();
         long recoverTime = Instant.now().toEpochMilli();
         long durationMs = recoverTime - injectTime;
@@ -64,21 +65,21 @@ public class FaultDrillController {
             "result", result
         );
         currentScenario = "none";
-        return resp;
+        return Result.ok(resp);
     }
 
     /**
      * 查询当前演练状态
      */
     @GetMapping("/status")
-    public Map<String, Object> status() {
+    public Result<Map<String, Object>> status() {
         requireMerchant();
-        return Map.of(
+        return Result.ok(Map.of(
             "scenario", currentScenario,
             "injectTime", injectTime,
             "elapsedMs", currentScenario.equals("none") ? 0 :
                     Instant.now().toEpochMilli() - injectTime
-        );
+        ));
     }
 
     private void requireMerchant() {

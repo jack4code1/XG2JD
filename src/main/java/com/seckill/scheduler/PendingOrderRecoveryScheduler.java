@@ -1,6 +1,7 @@
 package com.seckill.scheduler;
 
 import com.seckill.config.RabbitMQConfig;
+import com.seckill.constant.SeckillRedisKeys;
 import com.seckill.dto.OrderMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,6 +15,8 @@ import org.redisson.api.RedissonClient;
 import com.seckill.repository.CouponRepository;
 import com.seckill.repository.MerchantRepository;
 import com.seckill.service.NotificationService;
+import com.seckill.service.PendingOrderService;
+import com.seckill.repository.OrderRepository;
 
 import java.math.BigDecimal;
 import java.util.Map;
@@ -30,7 +33,7 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class PendingOrderRecoveryScheduler {
 
-    public static final String PENDING_ORDER_INDEX = "seckill:pending:orders";
+    public static final String PENDING_ORDER_INDEX = SeckillRedisKeys.PENDING_ORDER_INDEX;
     private static final int BATCH_SIZE = 100;
 
     private final StringRedisTemplate stringRedisTemplate;
@@ -39,6 +42,8 @@ public class PendingOrderRecoveryScheduler {
     private final CouponRepository couponRepository;
     private final MerchantRepository merchantRepository;
     private final NotificationService notificationService;
+    private final OrderRepository orderRepository;
+    private final PendingOrderService pendingOrderService;
 
     @Value("${seckill.pending-order.max-retries:10}")
     private int maxRetries;
@@ -78,6 +83,10 @@ public class PendingOrderRecoveryScheduler {
                     .userWeight(Integer.parseInt(value(raw, "user_weight")))
                     .timestamp(Long.parseLong(value(raw, "timestamp")))
                     .build();
+            if (orderRepository.findByOrderNo(orderNo).isPresent()) {
+                pendingOrderService.acknowledge(orderNo, message.getCouponId());
+                return;
+            }
             CorrelationData correlation = new CorrelationData(orderNo);
             rabbitTemplate.convertAndSend(RabbitMQConfig.ORDER_CREATE_EXCHANGE,
                     RabbitMQConfig.ORDER_CREATE_KEY, message, correlation);
@@ -85,9 +94,8 @@ public class PendingOrderRecoveryScheduler {
             if (confirm == null || !confirm.isAck()) {
                 throw new IllegalStateException("RabbitMQ 发布确认失败");
             }
-            stringRedisTemplate.delete(key);
-            stringRedisTemplate.opsForZSet().remove(PENDING_ORDER_INDEX, orderNo);
-            log.info("已补偿投递秒杀订单: orderNo={}", orderNo);
+            pendingOrderService.markDeliveryConfirmed(orderNo, message.getCouponId());
+            log.info("已确认补偿投递，等待消费者落库: orderNo={}", orderNo);
         } catch (Exception e) {
             scheduleRetry(orderNo, key, raw, now, e);
         }
@@ -139,6 +147,6 @@ public class PendingOrderRecoveryScheduler {
     }
 
     public static String pendingOrderKey(String orderNo) {
-        return "seckill:pending:order:" + orderNo;
+        return SeckillRedisKeys.pendingOrder(orderNo);
     }
 }

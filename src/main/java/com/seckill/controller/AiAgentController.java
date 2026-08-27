@@ -1,5 +1,6 @@
 package com.seckill.controller;
 
+import com.seckill.common.Result;
 import com.seckill.agent.AgentOrchestrator;
 import com.seckill.repository.CouponRepository;
 import com.seckill.repository.MerchantRepository;
@@ -9,7 +10,6 @@ import com.seckill.service.AiExecutionService;
 import com.seckill.exception.ForbiddenException;
 import com.seckill.util.UserContext;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -30,7 +30,6 @@ public class AiAgentController {
     private final AgentOrchestrator orchestrator;
     private final CouponRepository couponRepository;
     private final MerchantRepository merchantRepository;
-    private final RedisTemplate<String, Object> redisTemplate;
     private final AiAuditLogRepository aiAuditLogRepository;
     private final AiExecutionService aiExecutionService;
 
@@ -38,70 +37,69 @@ public class AiAgentController {
      * 将自然语言运营目标固化成不可变 Proposal。此接口只规划，不执行写操作。
      */
     @PostMapping("/tasks")
-    public Map<String, Object> createTask(@RequestBody Map<String, String> request) {
+    public Result<Map<String, Object>> createTask(@RequestBody Map<String, String> request) {
         requireMerchant();
-        return aiExecutionService.createTask(currentMerchantId(), request.get("query"));
+        return Result.ok(aiExecutionService.createTask(currentMerchantId(), request.get("query")));
     }
 
     /** 查询当前商户最近 20 个 AI 执行任务及动作时间线。 */
     @GetMapping("/tasks")
-    public List<Map<String, Object>> tasks() {
+    public Result<List<Map<String, Object>>> tasks() {
         requireMerchant();
-        return aiExecutionService.listTasks(currentMerchantId());
+        return Result.ok(aiExecutionService.listTasks(currentMerchantId()));
     }
 
     /** 确认并执行已经保存的 Proposal，不再重新调用模型生成参数。 */
     @PostMapping("/tasks/{taskNo}/confirm")
-    public Map<String, Object> confirmTask(@PathVariable String taskNo) {
+    public Result<Map<String, Object>> confirmTask(@PathVariable String taskNo) {
         requireMerchant();
-        return aiExecutionService.confirm(currentMerchantId(), taskNo);
+        return Result.ok(aiExecutionService.confirm(currentMerchantId(), taskNo));
     }
 
     @PostMapping("/tasks/{taskNo}/cancel")
-    public Map<String, Object> cancelTask(@PathVariable String taskNo) {
+    public Result<Map<String, Object>> cancelTask(@PathVariable String taskNo) {
         requireMerchant();
-        return aiExecutionService.cancel(currentMerchantId(), taskNo);
+        return Result.ok(aiExecutionService.cancel(currentMerchantId(), taskNo));
     }
 
     /**
      * AI 策划活动
      */
     @PostMapping("/campaign/plan")
-    public Map<String, Object> planCampaign(@RequestBody Map<String, String> request) {
+    public Result<Map<String, Object>> planCampaign(@RequestBody Map<String, String> request) {
         requireMerchant();
         String query = request.getOrDefault("query", "帮我策划一个秒杀活动");
         String plan = orchestrator.planCampaign(query);
 
-        return Map.of(
-            "success", true,
+        return Result.ok(Map.of(
             "query", query,
             "plan", plan,
             "agents", new String[]{"📊数据分析Agent", "🛡️风控Agent", "✍️内容Agent", "📈策略Agent"}
-        );
+        ));
     }
 
     /**
      * AI 运营 Copilot：实时数据快照 → 意图识别 → Agent 并行分析 → 结构化动作。
      */
     @PostMapping("/copilot/query")
-    public Map<String, Object> copilot(@RequestBody Map<String, String> request) {
+    public Result<Map<String, Object>> copilot(@RequestBody Map<String, String> request) {
         requireMerchant();
         Long merchantId = currentMerchantId();
         Map<String, Object> result = orchestrator.copilot(request.get("query"), merchantId);
         saveAudit(merchantId, result);
-        return result;
+        return Result.ok(result);
     }
 
     /** 返回最近 20 次 Copilot 调用，供商家复盘 AI 推荐质量和降级情况。 */
     @GetMapping("/audits")
-    public java.util.List<AiAuditLog> audits() {
+    public Result<java.util.List<AiAuditLog>> audits() {
         requireMerchant();
-        return aiAuditLogRepository.findTop20ByMerchantIdOrderByCreatedAtDesc(currentMerchantId());
+        return Result.ok(aiAuditLogRepository.findTop20ByMerchantIdOrderByCreatedAtDesc(currentMerchantId()));
     }
 
     /** 固定问题集的轻量评测，验证意图识别、结构化输出和降级可用性。 */
     @PostMapping("/eval")
-    public Map<String, Object> eval() {
+    public Result<Map<String, Object>> eval() {
         requireMerchant();
         Long merchantId = currentMerchantId();
         List<Map<String, String>> cases = List.of(
@@ -125,7 +123,7 @@ public class AiAgentController {
                     "elapsedMs", result.get("elapsedMs")));
         }
         long passed = results.stream().filter(r -> Boolean.TRUE.equals(r.get("intentPass")) && Boolean.TRUE.equals(r.get("structuredPass"))).count();
-        return Map.of("total", results.size(), "passed", passed, "passRate", passed * 100.0 / results.size(), "cases", results);
+        return Result.ok(Map.of("total", results.size(), "passed", passed, "passRate", passed * 100.0 / results.size(), "cases", results));
     }
 
     /**
@@ -133,17 +131,17 @@ public class AiAgentController {
      * creates a pending task; direct model-triggered writes are forbidden.
      */
     @PostMapping("/copilot/execute")
-    public Map<String, Object> executeCopilot(@RequestBody Map<String, String> request) {
+    public Result<Map<String, Object>> executeCopilot(@RequestBody Map<String, String> request) {
         requireMerchant();
-        return aiExecutionService.createTask(currentMerchantId(), request.get("query"));
+        return Result.ok(aiExecutionService.createTask(currentMerchantId(), request.get("query")));
     }
 
     /** Legacy route: create a reviewable task instead of one-click execution. */
     @PostMapping("/campaign/execute")
-    public Map<String, Object> executePlan(@RequestBody Map<String, String> request) {
+    public Result<Map<String, Object>> executePlan(@RequestBody Map<String, String> request) {
         requireMerchant();
-        return aiExecutionService.createTask(currentMerchantId(),
-                request.getOrDefault("query", "帮我创建一个限时优惠活动"));
+        return Result.ok(aiExecutionService.createTask(currentMerchantId(),
+                request.getOrDefault("query", "帮我创建一个限时优惠活动")));
     }
 
     private void requireMerchant() {
@@ -176,19 +174,6 @@ public class AiAgentController {
         return defaultValue;
     }
 
-    private void warmup(com.seckill.model.Coupon coupon) {
-        String key = "seckill:coupon:" + coupon.getId();
-        Map<String, Object> fields = new java.util.HashMap<>();
-        fields.put("total", coupon.getTotalStock());
-        fields.put("remain", coupon.getRemainStock());
-        fields.put("version", 0);
-        fields.put("per_user_max", coupon.getPerUserMax());
-        fields.put("status", 1);
-        fields.put("start_time", coupon.getStartTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
-        fields.put("end_time", coupon.getEndTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
-        redisTemplate.opsForHash().putAll(key, fields);
-    }
-
     private int extractInt(String plan, int defaultValue) {
         java.util.regex.Pattern p = java.util.regex.Pattern.compile("库存[^0-9]*([0-9]+)");
         java.util.regex.Matcher m = p.matcher(plan.replaceAll("\\s", ""));
@@ -200,12 +185,12 @@ public class AiAgentController {
      * 健康检查
      */
     @GetMapping("/health")
-    public Map<String, Object> health() {
-        return Map.of(
+    public Result<Map<String, Object>> health() {
+        return Result.ok(Map.of(
             "status", "ok",
             "model", "DeepSeek Chat",
             "agents", new String[]{"data", "risk", "content", "strategy"},
             "executionTools", new String[]{"CREATE_CAMPAIGN", "INCREASE_STOCK", "PAUSE_CAMPAIGN", "RESUME_CAMPAIGN"}
-        );
+        ));
     }
 }

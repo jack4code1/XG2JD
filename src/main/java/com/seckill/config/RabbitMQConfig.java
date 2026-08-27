@@ -9,6 +9,7 @@ import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.boot.autoconfigure.amqp.SimpleRabbitListenerContainerFactoryConfigurer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 @Configuration
 public class RabbitMQConfig {
@@ -21,6 +22,8 @@ public class RabbitMQConfig {
     public static final String CACHE_SYNC_QUEUE = "cache.sync.queue";
     public static final String CACHE_SYNC_EXCHANGE = "cache.sync";
     public static final String CACHE_SYNC_KEY = "cache.sync.#";
+
+    public static final String CACHE_INVALIDATION_EXCHANGE = "cache.invalidation";
 
     public static final String DEAD_LETTER_QUEUE = "dead.letter.queue";
     public static final String DEAD_LETTER_EXCHANGE = "dead.letter.exchange";
@@ -62,6 +65,30 @@ public class RabbitMQConfig {
     @Bean
     public Binding cacheSyncBinding() {
         return BindingBuilder.bind(cacheSyncQueue()).to(cacheSyncExchange()).with(CACHE_SYNC_KEY);
+    }
+
+    /** Every application instance receives an invalidation event for its L1 cache. */
+    @Bean
+    public FanoutExchange cacheInvalidationExchange() {
+        return new FanoutExchange(CACHE_INVALIDATION_EXCHANGE);
+    }
+
+    /**
+     * A per-instance ephemeral queue without the legacy queue_master_locator
+     * argument that RabbitMQ 4.x no longer permits.
+     */
+    @Bean
+    public Queue cacheInvalidationQueue() {
+        return QueueBuilder.nonDurable("cache.invalidation." + java.util.UUID.randomUUID())
+                .exclusive()
+                .autoDelete()
+                .build();
+    }
+
+    @Bean
+    public Binding cacheInvalidationBinding(@Qualifier("cacheInvalidationQueue") Queue cacheInvalidationQueue,
+                                             @Qualifier("cacheInvalidationExchange") FanoutExchange cacheInvalidationExchange) {
+        return BindingBuilder.bind(cacheInvalidationQueue).to(cacheInvalidationExchange);
     }
 
     @Bean

@@ -1,5 +1,7 @@
 package com.seckill.controller;
 
+import com.seckill.common.Result;
+import com.seckill.common.ResultCode;
 import com.seckill.dto.SeckillRequest;
 import com.seckill.dto.SeckillResponse;
 import com.seckill.dto.SeckillResultResponse;
@@ -32,10 +34,10 @@ public class SeckillController {
      * 执行秒杀
      */
     @PostMapping("/execute")
-    public SeckillResponse execute(@RequestBody SeckillRequest request) {
+    public Result<SeckillResponse> execute(@RequestBody SeckillRequest request) {
         Long userId = UserContext.getUserId();
         if (userId == null) {
-            return SeckillResponse.fail("请先登录");
+            return Result.fail(ResultCode.UNAUTHORIZED);
         }
 
         // 设置设备指纹到线程上下文
@@ -44,7 +46,7 @@ public class SeckillController {
         }
 
         try {
-            return seckillService.executeSeckill(userId, request.getCouponId());
+            return Result.ok(seckillService.executeSeckill(userId, request.getCouponId()));
         } finally {
             DeviceFingerprintUtil.clear();
         }
@@ -54,14 +56,13 @@ public class SeckillController {
      * 查询秒杀结果（供前端轮询）
      */
     @GetMapping("/result/{orderNo}")
-    public SeckillResultResponse queryResult(@PathVariable String orderNo) {
+    public Result<SeckillResultResponse> queryResult(@PathVariable String orderNo) {
         Long userId = UserContext.getUserId();
         if (userId == null) {
-            return SeckillResultResponse.builder()
-                    .success(false).orderNo(orderNo).status("UNAUTHORIZED").message("请先登录").build();
+            return Result.fail(ResultCode.UNAUTHORIZED);
         }
 
-        return orderRepository.findByOrderNo(orderNo)
+        SeckillResultResponse response = orderRepository.findByOrderNo(orderNo)
                 .filter(order -> userId.equals(order.getUserId()))
                 .map(order -> SeckillResultResponse.builder()
                         .success(true)
@@ -73,6 +74,7 @@ public class SeckillController {
                         .build())
                 .orElseGet(() -> SeckillResultResponse.builder()
                         .success(false).orderNo(orderNo).status("NOT_FOUND").message("订单还在创建中，请稍后重试").build());
+        return Result.ok(response);
     }
 
     private String resultMessage(String status) {

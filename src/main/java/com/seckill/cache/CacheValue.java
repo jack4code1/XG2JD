@@ -1,5 +1,6 @@
 package com.seckill.cache;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -27,10 +28,12 @@ public class CacheValue<T> {
     /** 物理过期兜底时间戳（毫秒），过期后强制阻塞重建 */
     private long physicalExpireTime;
 
+    @JsonIgnore
     public boolean isLogicallyExpired() {
         return System.currentTimeMillis() > logicExpireTime;
     }
 
+    @JsonIgnore
     public boolean isPhysicallyExpired() {
         return System.currentTimeMillis() > physicalExpireTime;
     }

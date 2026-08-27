@@ -1,5 +1,6 @@
 package com.seckill.controller;
 
+import com.seckill.common.Result;
 import com.seckill.exception.ForbiddenException;
 import com.seckill.model.Coupon;
 import com.seckill.model.Order;
@@ -30,27 +31,36 @@ public class ProductController {
     private final OrderRepository orderRepository;
 
     @GetMapping("/shop/{merchantId}")
-    public List<Product> list(@PathVariable Long merchantId) {
-        return productRepository.findByMerchantIdAndStatusOrderByCreatedAtDesc(merchantId, 1);
+    public Result<List<Product>> list(@PathVariable Long merchantId) {
+        return Result.ok(productRepository.findByMerchantIdAndStatusOrderByCreatedAtDesc(merchantId, 1));
     }
 
     @PostMapping("/create")
-    public Product create(@RequestBody Product request) {
+    public Result<Product> create(@RequestBody Product request) {
         MerchantAccess.requireMerchant();
+        if (request.getName() == null || request.getName().isBlank()) {
+            throw new IllegalArgumentException("商品名称不能为空");
+        }
+        if (request.getPrice() == null || request.getPrice().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("商品价格必须大于 0");
+        }
+        if (request.getRemainStock() == null || request.getRemainStock() < 0) {
+            throw new IllegalArgumentException("商品库存不能小于 0");
+        }
         Product product = new Product();
         product.setMerchantId(currentMerchantId());
-        product.setName(request.getName());
+        product.setName(request.getName().trim());
         product.setDescription(request.getDescription());
         product.setPrice(request.getPrice());
         product.setRemainStock(request.getRemainStock());
         product.setStatus(1);
-        return productRepository.save(product);
+        return Result.ok(productRepository.save(product));
     }
 
     /** 当前商户编辑商品资料、库存和上下架状态。 */
     @PutMapping("/{productId}")
     @Transactional
-    public Product update(@PathVariable Long productId, @RequestBody Product request) {
+    public Result<Product> update(@PathVariable Long productId, @RequestBody Product request) {
         MerchantAccess.requireMerchant();
         Product product = ownedProduct(productId);
         if (request.getName() != null) {
@@ -70,12 +80,12 @@ public class ProductController {
             if (request.getStatus() != 0 && request.getStatus() != 1) throw new IllegalArgumentException("商品状态只能是上架或下架");
             product.setStatus(request.getStatus());
         }
-        return productRepository.save(product);
+        return Result.ok(productRepository.save(product));
     }
 
     @PostMapping("/{productId}/purchase")
     @Transactional
-    public Map<String, Object> purchase(@PathVariable Long productId, @RequestBody(required = false) Map<String, Long> body) {
+    public Result<Map<String, Object>> purchase(@PathVariable Long productId, @RequestBody(required = false) Map<String, Long> body) {
         if (!"USER".equals(UserContext.getRole())) throw new ForbiddenException("只有普通用户可以购买商品");
         Product product = productRepository.findById(productId).orElseThrow(() -> new IllegalArgumentException("商品不存在"));
         if (product.getStatus() != 1 || product.getRemainStock() == null || product.getRemainStock() < 1) {
@@ -90,7 +100,7 @@ public class ProductController {
             if (!orderRepository.existsByUserIdAndCouponIdAndOrderType(UserContext.getUserId(), couponId, CLAIM)) {
                 throw new IllegalArgumentException("你还没有领取这张代金券");
             }
-            if (orderRepository.existsByUserIdAndCouponIdAndOrderTypeAndStatusIn(UserContext.getUserId(), couponId, PURCHASE, List.of("CREATED", "PAYING", "PAID", "USED"))) {
+            if (orderRepository.existsByUserIdAndCouponIdAndOrderTypeAndStatusIn(UserContext.getUserId(), couponId, PURCHASE, List.of("PENDING_PAYMENT", "PAYING", "PAID", "USED"))) {
                 throw new IllegalArgumentException("这张代金券已经使用过");
             }
             discount = coupon.getDiscountAmount() == null ? BigDecimal.ZERO : coupon.getDiscountAmount();
@@ -106,10 +116,10 @@ public class ProductController {
         order.setOriginalAmount(product.getPrice());
         order.setDiscountAmount(discount);
         order.setAmount(product.getPrice().subtract(discount));
-        order.setStatus("CREATED");
+        order.setStatus("PENDING_PAYMENT");
         order.setVersion(0);
         Order saved = orderRepository.save(order);
-        return Map.of("success", true, "orderNo", saved.getOrderNo(), "originalAmount", product.getPrice(), "discountAmount", discount, "payableAmount", saved.getAmount());
+        return Result.ok(Map.of("orderNo", saved.getOrderNo(), "originalAmount", product.getPrice(), "discountAmount", discount, "payableAmount", saved.getAmount()));
     }
 
     private boolean couponInWindow(Coupon c) {

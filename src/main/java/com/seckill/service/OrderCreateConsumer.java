@@ -32,6 +32,7 @@ public class OrderCreateConsumer {
     private final OrderRepository orderRepository;
     private final EventLogRepository eventLogRepository;
     private final CouponRepository couponRepository;
+    private final PendingOrderService pendingOrderService;
 
     @RabbitListener(queues = RabbitMQConfig.ORDER_CREATE_QUEUE)
     @Transactional(rollbackFor = Exception.class)
@@ -42,6 +43,7 @@ public class OrderCreateConsumer {
         // 1. 幂等检查
         if (orderRepository.findByOrderNo(message.getOrderNo()).isPresent()) {
             log.warn("订单已存在，跳过: orderNo={}", message.getOrderNo());
+            pendingOrderService.acknowledgeAfterCommit(message.getOrderNo(), message.getCouponId());
             return;
         }
 
@@ -72,6 +74,10 @@ public class OrderCreateConsumer {
         eventLog.setMaxRetry(10);
         eventLog.setNextRetryAt(LocalDateTime.now());
         eventLogRepository.saveAndFlush(eventLog);
+
+        // Do not clear pending before this transaction commits. A crash after
+        // MQ confirm but before commit is recovered by the next idempotent replay.
+        pendingOrderService.acknowledgeAfterCommit(message.getOrderNo(), message.getCouponId());
 
         log.info("订单创建成功: orderNo={}", message.getOrderNo());
     }

@@ -2,19 +2,26 @@ package com.seckill.service;
 
 import com.seckill.cache.HotKeyCacheManager;
 import com.seckill.cache.HotKeyDetector;
+import com.seckill.cache.CacheValue;
+import com.seckill.config.RabbitMQConfig;
 import com.seckill.model.Coupon;
+import com.seckill.perf.PerfCacheMetrics;
 import com.seckill.repository.CouponRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -39,6 +46,14 @@ public class CouponCacheService {
     private final HotKeyDetector hotKeyDetector;
     private final CouponRepository couponRepository;
     private final RedissonClient redissonClient;
+    private final RabbitTemplate rabbitTemplate;
+    private final ObjectProvider<PerfCacheMetrics> perfCacheMetrics;
+
+    @Value("${seckill.cache.active-logical-expire-seconds:30}")
+    private long activeLogicalExpireSeconds = 30;
+
+    @Value("${seckill.cache.active-physical-expire-seconds:600}")
+    private long activePhysicalExpireSeconds = 600;
 
     /**
      * Public read path: L1 Caffeine -> L2 immutable Redis snapshot -> MySQL.
@@ -53,7 +68,10 @@ public class CouponCacheService {
         if (version == null) return null;
 
         String versionKey = versionedDetailKey(couponId, version);
-        Map<String, Object> l1 = hotKeyCacheManager.get(versionKey, stableKey, Map.class);
+        HotKeyCacheManager.CacheLookup<Map<String, Object>> lookup = hotKeyCacheManager.getWithLookup(
+                versionKey, stableKey, () -> refreshActiveSnapshot(couponId, versionKey));
+        recordLookup(lookup);
+        Map<String, Object> l1 = lookup.value();
         if (l1 != null) return l1;
 
         Map<String, Object> l2 = readSnapshot(versionKey);
@@ -79,15 +97,20 @@ public class CouponCacheService {
         String versionKey = versionedDetailKey(coupon.getId(), version);
 
         Map<String, Object> snapshot = snapshotOf(coupon, version);
-        redisTemplate.opsForValue().set(versionKey, snapshot, DETAIL_TTL);
+        Object cacheEntry = cacheEntry(snapshot);
+        redisTemplate.opsForValue().set(versionKey, cacheEntry, ttlFor(snapshot));
         // The pointer is written only after the snapshot exists, so a reader
         // sees either the old complete version or the new complete version.
         redisTemplate.opsForValue().set(activeKey, version);
-        hotKeyCacheManager.putNormal(versionKey, snapshot);
-
         if (previousVersion != null && previousVersion != version) {
-            hotKeyCacheManager.evict(versionedDetailKey(coupon.getId(), previousVersion));
+            redisTemplate.delete(versionedDetailKey(coupon.getId(), previousVersion));
         }
+        List<String> invalidationKeys = new java.util.ArrayList<>();
+        invalidationKeys.add(versionKey);
+        if (previousVersion != null) {
+            invalidationKeys.add(versionedDetailKey(coupon.getId(), previousVersion));
+        }
+        invalidateLocalAndBroadcast(invalidationKeys);
         log.debug("优惠券配置快照已发布: couponId={}, version={}, lifecycle={}",
                 coupon.getId(), version, snapshot.get("lifecycle"));
     }
@@ -97,9 +120,22 @@ public class CouponCacheService {
         Integer version = parseVersion(redisTemplate.opsForValue().get(activeVersionKey(couponId)));
         if (version != null) {
             String versionKey = versionedDetailKey(couponId, version);
-            hotKeyCacheManager.evict(versionKey);
+            invalidateLocalAndBroadcast(List.of(versionKey));
             redisTemplate.delete(versionKey);
         }
+        redisTemplate.delete(activeVersionKey(couponId));
+    }
+
+    /** Clears only this JVM's L1 entries for a single known coupon. */
+    public void clearLocalDetailCache(Long couponId) {
+        Integer version = parseVersion(redisTemplate.opsForValue().get(activeVersionKey(couponId)));
+        if (version != null) hotKeyCacheManager.evict(versionedDetailKey(couponId, version));
+    }
+
+    /** Clears only the version pointer and current snapshot for a known coupon. */
+    public void clearRedisDetailCache(Long couponId) {
+        Integer version = parseVersion(redisTemplate.opsForValue().get(activeVersionKey(couponId)));
+        if (version != null) redisTemplate.delete(versionedDetailKey(couponId, version));
         redisTemplate.delete(activeVersionKey(couponId));
     }
 
@@ -127,12 +163,13 @@ public class CouponCacheService {
     }
 
     private Integer resolvePublishedVersion(Long couponId) {
+        metrics().recordRedisVersionPointerRead();
         Object cached = redisTemplate.opsForValue().get(activeVersionKey(couponId));
         if (NULL_SENTINEL.equals(String.valueOf(cached))) return null;
         Integer version = parseVersion(cached);
         if (version != null) return version;
 
-        Coupon coupon = couponRepository.findById(couponId).orElse(null);
+        Coupon coupon = loadCoupon(couponId);
         if (coupon == null) {
             cacheMissing(couponId);
             return null;
@@ -158,7 +195,7 @@ public class CouponCacheService {
             Map<String, Object> rebuiltByPeer = readSnapshot(requestedVersionKey);
             if (rebuiltByPeer != null) return rebuiltByPeer;
 
-            Coupon coupon = couponRepository.findById(couponId).orElse(null);
+            Coupon coupon = loadCoupon(couponId);
             if (coupon == null) {
                 cacheMissing(couponId);
                 return null;
@@ -179,10 +216,70 @@ public class CouponCacheService {
     @SuppressWarnings("unchecked")
     private Map<String, Object> readSnapshot(String key) {
         Object cached = redisTemplate.opsForValue().get(key);
-        if (!(cached instanceof Map<?, ?> raw)) return null;
+        if (cached instanceof CacheValue<?> cacheValue) {
+            cached = cacheValue.getData();
+        }
+        if (!(cached instanceof Map<?, ?> raw)) {
+            metrics().recordRedisSnapshot(false);
+            return null;
+        }
+        // Generic serializers can deserialize a CacheValue into a map during
+        // rolling deployments. Accept that representation for compatibility.
+        if (raw.containsKey("data") && raw.containsKey("logicExpireTime")
+                && raw.get("data") instanceof Map<?, ?> wrappedData) {
+            raw = wrappedData;
+        }
         Map<String, Object> snapshot = new LinkedHashMap<>();
         raw.forEach((field, value) -> snapshot.put(String.valueOf(field), value));
+        metrics().recordRedisSnapshot(true);
         return snapshot;
+    }
+
+    private CacheValue<Map<String, Object>> refreshActiveSnapshot(Long couponId, String versionKey) {
+        Coupon coupon = loadCoupon(couponId);
+        if (coupon == null) {
+            return null;
+        }
+        Map<String, Object> snapshot = snapshotOf(coupon, coupon.getVersion() == null ? 0 : coupon.getVersion());
+        if (!"ACTIVE".equals(snapshot.get("lifecycle"))) {
+            redisTemplate.opsForValue().set(versionKey, snapshot, DETAIL_TTL);
+            return CacheValue.<Map<String, Object>>builder()
+                    .data(snapshot).logicExpireTime(Long.MAX_VALUE)
+                    .physicalExpireTime(System.currentTimeMillis() + DETAIL_TTL.toMillis()).build();
+        }
+        CacheValue<Map<String, Object>> cacheValue = activeCacheValue(snapshot);
+        redisTemplate.opsForValue().set(versionKey, cacheValue, activePhysicalTtl());
+        return cacheValue;
+    }
+
+    private Object cacheEntry(Map<String, Object> snapshot) {
+        return "ACTIVE".equals(snapshot.get("lifecycle")) ? activeCacheValue(snapshot) : snapshot;
+    }
+
+    private Duration ttlFor(Map<String, Object> snapshot) {
+        return "ACTIVE".equals(snapshot.get("lifecycle")) ? activePhysicalTtl() : DETAIL_TTL;
+    }
+
+    private CacheValue<Map<String, Object>> activeCacheValue(Map<String, Object> snapshot) {
+        long now = System.currentTimeMillis();
+        return CacheValue.<Map<String, Object>>builder()
+                .data(snapshot)
+                .logicExpireTime(now + Duration.ofSeconds(activeLogicalExpireSeconds).toMillis())
+                .physicalExpireTime(now + activePhysicalTtl().toMillis())
+                .build();
+    }
+
+    private Duration activePhysicalTtl() {
+        return Duration.ofSeconds(activePhysicalExpireSeconds);
+    }
+
+    private void invalidateLocalAndBroadcast(List<String> cacheKeys) {
+        List<String> validKeys = cacheKeys.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        validKeys.forEach(hotKeyCacheManager::evict);
+        if (!validKeys.isEmpty()) {
+            rabbitTemplate.convertAndSend(RabbitMQConfig.CACHE_INVALIDATION_EXCHANGE, "",
+                    Map.of("cacheKeys", validKeys));
+        }
     }
 
     private Map<String, Object> snapshotOf(Coupon coupon, int version) {
@@ -220,6 +317,36 @@ public class CouponCacheService {
         } catch (NumberFormatException ignored) {
             return null;
         }
+    }
+
+    private Coupon loadCoupon(Long couponId) {
+        metrics().recordDbLoad();
+        return couponRepository.findById(couponId).orElse(null);
+    }
+
+    private void recordLookup(HotKeyCacheManager.CacheLookup<?> lookup) {
+        if (lookup.caffeineHit()) metrics().recordCaffeineHit();
+        else metrics().recordCaffeineMiss();
+        for (int index = 0; index < lookup.redisSnapshotReads(); index++) {
+            metrics().recordRedisSnapshot(index < lookup.redisSnapshotHits());
+        }
+    }
+
+    private PerfCacheMetrics metrics() {
+        PerfCacheMetrics metrics = perfCacheMetrics.getIfAvailable();
+        return metrics == null ? NoopPerfCacheMetrics.INSTANCE : metrics;
+    }
+
+    private static final class NoopPerfCacheMetrics extends PerfCacheMetrics {
+        private static final NoopPerfCacheMetrics INSTANCE = new NoopPerfCacheMetrics();
+
+        private NoopPerfCacheMetrics() { super(null); }
+
+        @Override public void recordCaffeineHit() {}
+        @Override public void recordCaffeineMiss() {}
+        @Override public void recordRedisSnapshot(boolean hit) {}
+        @Override public void recordRedisVersionPointerRead() {}
+        @Override public void recordDbLoad() {}
     }
 
     private String stableDetailKey(Long couponId) { return "coupon:detail:" + couponId; }

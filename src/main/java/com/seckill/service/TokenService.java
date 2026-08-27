@@ -1,7 +1,6 @@
 package com.seckill.service;
 
 import com.seckill.dto.LoginResponse;
-import com.seckill.util.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -10,41 +9,48 @@ import org.springframework.stereotype.Service;
 
 import java.security.SecureRandom;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Base64;
 
 /**
- * Token 服务 — 双Token + 轮换 + 黑名单
- *
- * 面试可讲：
- * - Access Token 30min(JWT无状态) + Refresh Token 7天(UUID，Redis存储)
- * - 轮换策略：每次刷新换新RefreshToken，旧的加入黑名单(1h窗口)
- * - 盗用检测：旧Token命中黑名单→攻击者和合法用户只有一人成功→触发全设备登出
+ * Redis-backed access-token sessions plus rotating refresh tokens.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class TokenService {
 
-    private final JwtUtil jwtUtil;
     private final RedisTemplate<String, Object> redisTemplate;
     private final SecureRandom secureRandom = new SecureRandom();
 
     @Value("${seckill.jwt.refresh-expire-days:7}")
     private int refreshExpireDays;
 
+    @Value("${seckill.auth.access-token-ttl-minutes:30}")
+    private int accessTokenTtlMinutes;
+
     /**
      * 生成 Token 对
      */
     public LoginResponse generateTokens(Long userId, String username, String role) {
-        String accessToken = jwtUtil.generateAccessToken(userId, username, role);
+        String normalizedRole = role != null ? role : "USER";
+        String accessToken = generateOpaqueToken();
         String refreshToken = generateRefreshToken();
+
+        // COSEC: The opaque token is the only session credential. Redis holds
+        // minimal identity data server-side so it can be invalidated centrally.
+        redisTemplate.opsForHash().putAll(accessTokenKey(accessToken), Map.of(
+                "userId", userId.toString(),
+                "username", username,
+                "role", normalizedRole));
+        redisTemplate.expire(accessTokenKey(accessToken), Duration.ofMinutes(accessTokenTtlMinutes));
 
         redisTemplate.opsForHash().put("refresh:token:" + refreshToken, "userId", userId.toString());
         redisTemplate.opsForHash().put("refresh:token:" + refreshToken, "username", username);
-        redisTemplate.opsForHash().put("refresh:token:" + refreshToken, "role", role != null ? role : "USER");
+        redisTemplate.opsForHash().put("refresh:token:" + refreshToken, "role", normalizedRole);
         redisTemplate.expire("refresh:token:" + refreshToken, Duration.ofDays(refreshExpireDays));
 
-        return LoginResponse.of(accessToken, refreshToken, 30 * 60, role != null ? role : "USER");
+        return LoginResponse.of(accessToken, refreshToken, accessTokenTtlMinutes * 60L, normalizedRole);
     }
 
     /**
@@ -82,34 +88,29 @@ public class TokenService {
     }
 
     /**
-     * 登出：Access Token 加入黑名单 + 删除 Refresh Token
+     * 登出：删除 Redis Access Token 会话和 Refresh Token。
      */
     public void logout(String accessToken, String refreshToken) {
-        try {
-            var claims = jwtUtil.parseToken(accessToken);
-            String jti = claims.getId();
-            long remainingTtl = jwtUtil.getRemainingTtl(accessToken);
-
-            // JWT 黑名单（TTL = 剩余有效期）
-            if (remainingTtl > 0) {
-                redisTemplate.opsForValue().set("jwt:blacklist:" + jti, "1",
-                        Duration.ofSeconds(remainingTtl));
-            }
-
-            // 删除 Refresh Token
-            if (refreshToken != null) {
-                redisTemplate.delete("refresh:token:" + refreshToken);
-            }
-
-            log.info("用户登出: userId={}, jti={}", claims.getSubject(), jti);
-        } catch (Exception e) {
-            log.warn("登出时Token已无效: {}", e.getMessage());
+        if (accessToken != null && !accessToken.isBlank()) {
+            redisTemplate.delete(accessTokenKey(accessToken));
         }
+        if (refreshToken != null && !refreshToken.isBlank()) {
+            redisTemplate.delete("refresh:token:" + refreshToken);
+        }
+        log.info("用户登出，会话已删除");
     }
 
     private String generateRefreshToken() {
+        return generateOpaqueToken();
+    }
+
+    private String generateOpaqueToken() {
         byte[] bytes = new byte[32];
         secureRandom.nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    public String accessTokenKey(String accessToken) {
+        return "login:token:" + accessToken;
     }
 }

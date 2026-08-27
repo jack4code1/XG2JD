@@ -8,7 +8,7 @@
 
 - **AI 活动创建与受控发布**：自然语言需求被解析为包含优惠金额、库存、有效期、限领规则的结构化 Proposal；商户确认前不写业务数据，确认后仅允许创建活动、补库存、暂停、恢复等白名单动作。任务、动作和执行结果均持久化审计。
 - **Redis Lua 原子抢券**：在一次脚本调用中完成活动状态/时间窗口校验、库存扣减、一人一单判重与待投递订单记录；Bloom Filter 仅作性能预筛，Redis Set 才是最终判重依据。
-- **异步订单与可靠补偿**：Lua 原子受理后写入 Redis pending 记录；RabbitMQ publisher confirm 成功再清理。确认超时、初始投递失败或进程异常时，定时任务按指数退避重投，消费者按订单号幂等落库。
+- **异步订单与可靠补偿**：Lua 原子受理后写入 Redis pending 记录；publisher confirm 后等待消费者事务提交确认才清理。确认超时、初始投递失败或进程异常时，定时任务按指数退避重投，消费者按订单号幂等落库。
 - **活动生命周期感知缓存**：优惠券静态配置采用 Caffeine L1 + Redis L2；活动变更写入不可变版本快照，并通过 Redis 指针原子切换。热点缓存采用逻辑过期与异步刷新，库存与领取资格始终走 Redis 实时校验。
 - **并发状态控制与可观测性**：商品订单使用状态机与 JPA 乐观锁控制支付、取消、退款、核销等并发迁移；提供 Actuator、Prometheus 指标、通知中心和生命周期/补偿调度任务。
 
@@ -96,6 +96,14 @@ docker compose up -d --build
 
 > 默认密码仅用于本地开发。生产部署请通过环境变量设置数据库、RabbitMQ、JWT 和 AI 密钥；`prod` Profile 会拒绝示例默认密钥。
 
+应用配置不再提供数据库、RabbitMQ、JWT 或 AI 密钥默认值。启动前必须设置：
+
+```text
+SPRING_DATASOURCE_URL  MYSQL_USER  MYSQL_PASSWORD
+RABBITMQ_USER          RABBITMQ_PASSWORD
+JWT_SECRET             DEEPSEEK_API_KEY
+```
+
 ## 演示账号
 
 初始化数据中所有账号密码均为 `123456`。
@@ -159,7 +167,7 @@ Lua 原子扣减 + 写 pending
 
 | 接口 | 方法 | 说明 |
 | --- | --- | --- |
-| `/api/auth/login` | `POST` | 登录并获取 JWT |
+| `/api/auth/login` | `POST` | 登录并获取 Redis 共享会话 Token |
 | `/api/coupon/{couponId}` | `GET` | 查询活动详情（版本化分层缓存） |
 | `/api/seckill/execute` | `POST` | 发起抢券，返回订单号用于轮询 |
 | `/api/seckill/result/{orderNo}` | `GET` | 查询异步下单结果（仅本人） |

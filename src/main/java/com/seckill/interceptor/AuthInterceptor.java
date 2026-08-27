@@ -1,9 +1,13 @@
-package com.seckill.config;
+package com.seckill.interceptor;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.seckill.common.Result;
+import com.seckill.common.ResultCode;
 import com.seckill.util.UserContext;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
@@ -11,15 +15,18 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * 认证拦截器
  *
  * 面试可讲：
- * - preHandle: 从Header提取Token → 查黑名单 → 解析JWT → set ThreadLocal
+ * - preHandle: 从Header提取Token → Redis 查会话并续期 → set ThreadLocal
  * - afterCompletion: 必须 UserContext.clear()，防止线程池串数据
  */
 @Component
 @RequiredArgsConstructor
 public class AuthInterceptor implements HandlerInterceptor {
 
-    private final com.seckill.util.JwtUtil jwtUtil;
     private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
+    private final ObjectMapper objectMapper;
+
+    @Value("${seckill.auth.access-token-ttl-minutes:30}")
+    private int accessTokenTtlMinutes;
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response,
@@ -44,32 +51,28 @@ public class AuthInterceptor implements HandlerInterceptor {
 
         String token = extractToken(request);
         if (token == null) {
-            response.setStatus(401);
+            writeUnauthorized(response);
             return false;
         }
 
         try {
-            // 1. 解析 JWT
-            var claims = jwtUtil.parseToken(token);
-
-            // 2. 检查黑名单
-            String jti = claims.getId();
-            Boolean blacklisted = redisTemplate.hasKey("jwt:blacklist:" + jti);
-            if (Boolean.TRUE.equals(blacklisted)) {
-                response.setStatus(401);
+            java.util.Map<Object, Object> session = redisTemplate.opsForHash().entries("login:token:" + token);
+            if (session == null || session.isEmpty()) {
+                writeUnauthorized(response);
                 return false;
             }
 
-            // 3. 设置用户上下文
-            Long userId = Long.parseLong(claims.getSubject());
-            String username = claims.get("username", String.class);
-            String role = claims.get("role", String.class);
-            UserContext.set(userId, username, role != null ? role : "USER");
-
+            Long userId = Long.parseLong(String.valueOf(session.get("userId")));
+            String username = String.valueOf(session.get("username"));
+            Object role = session.get("role");
+            // COSEC: Sliding Redis TTL makes session revocation and expiry
+            // consistent across application instances without using HttpSession.
+            redisTemplate.expire("login:token:" + token,
+                    java.time.Duration.ofMinutes(accessTokenTtlMinutes));
+            UserContext.set(userId, username, role == null ? "USER" : String.valueOf(role));
             return true;
-
         } catch (Exception e) {
-            response.setStatus(401);
+            writeUnauthorized(response);
             return false;
         }
     }
@@ -86,5 +89,16 @@ public class AuthInterceptor implements HandlerInterceptor {
             return header.substring(7);
         }
         return null;
+    }
+
+    private void writeUnauthorized(HttpServletResponse response) {
+        try {
+            response.setStatus(HttpServletResponse.SC_OK);
+            response.setCharacterEncoding(java.nio.charset.StandardCharsets.UTF_8.name());
+            response.setContentType("application/json");
+            objectMapper.writeValue(response.getWriter(), Result.fail(ResultCode.UNAUTHORIZED));
+        } catch (java.io.IOException ignored) {
+            // The servlet container will finish the failed response.
+        }
     }
 }

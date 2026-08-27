@@ -5,11 +5,11 @@ import com.seckill.repository.CouponRepository;
 import com.seckill.service.CouponCacheService;
 import com.seckill.service.CouponVersionService;
 import com.seckill.service.NotificationService;
+import com.seckill.service.CouponSeckillStateService;
 import com.seckill.repository.MerchantRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,7 +23,7 @@ public class CouponLifecycleScheduler {
     private final CouponRepository couponRepository;
     private final CouponCacheService couponCacheService;
     private final CouponVersionService couponVersionService;
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final CouponSeckillStateService couponSeckillStateService;
     private final MerchantRepository merchantRepository;
     private final NotificationService notificationService;
 
@@ -38,7 +38,7 @@ public class CouponLifecycleScheduler {
     private void transition(Coupon coupon, int status, String action) {
         coupon.setStatus(status);
         Coupon saved = couponRepository.saveAndFlush(coupon);
-        redisTemplate.opsForHash().put("seckill:coupon:" + saved.getId(), "status", saved.getStatus());
+        couponSeckillStateService.syncActivity(saved);
         couponCacheService.publish(saved);
         couponVersionService.record(saved, action, null);
         merchantRepository.findById(saved.getMerchantId()).ifPresent(merchant -> notificationService.notify(

@@ -10,7 +10,6 @@ import com.seckill.model.Order;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -33,11 +32,11 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final EventLogRepository eventLogRepository;
     private final CouponRepository couponRepository;
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final CouponSeckillStateService couponSeckillStateService;
     private final ProductRepository productRepository;
 
     /**
-     * 用户支付订单：CREATED → PAYING
+     * 用户支付订单：PENDING_PAYMENT → PAYING
      */
     @Transactional
     public boolean pay(String orderNo) {
@@ -45,7 +44,7 @@ public class OrderService {
         if (!"PRODUCT_PURCHASE".equals(order.getOrderType())) {
             throw new IllegalArgumentException("代金券领取不需要支付，请用于商品结算");
         }
-        return transition(orderNo, "CREATED", "PAYING");
+        return transition(orderNo, "PENDING_PAYMENT", "PAYING");
     }
 
     /**
@@ -61,11 +60,13 @@ public class OrderService {
     }
 
     /**
-     * 取消订单：CREATED → CANCELED
+     * 取消订单：待支付 → CANCELED
      */
     @Transactional
     public boolean cancel(String orderNo) {
-        boolean changed = transition(orderNo, "CREATED", "CANCELED");
+        Order order = find(orderNo);
+        String expected = "PRODUCT_PURCHASE".equals(order.getOrderType()) ? "PENDING_PAYMENT" : "CREATED";
+        boolean changed = transition(orderNo, expected, "CANCELED");
         if (changed) restoreStock(orderNo);
         return changed;
     }
@@ -140,7 +141,7 @@ public class OrderService {
             if (couponRepository.incrementRemainStock(order.getCouponId()) != 1) {
                 throw new IllegalStateException("MySQL 券库存回补失败: couponId=" + order.getCouponId());
             }
-            Long restored = redisTemplate.opsForHash().increment("seckill:coupon:" + order.getCouponId(), "remain", 1);
+            Long restored = couponSeckillStateService.restoreStock(order.getCouponId());
             if (restored == null) throw new IllegalStateException("Redis 券库存回补失败: couponId=" + order.getCouponId());
         } else if (order.getProductId() != null && productRepository.incrementRemainStock(order.getProductId()) != 1) {
             throw new IllegalStateException("商品库存回补失败: productId=" + order.getProductId());

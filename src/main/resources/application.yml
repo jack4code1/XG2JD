@@ -6,9 +6,9 @@ spring:
     name: seckill-coupon
 
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/seckill?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai}
-    username: ${MYSQL_USER:root}
-    password: ${MYSQL_PASSWORD:root123}
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${MYSQL_USER}
+    password: ${MYSQL_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 20
@@ -34,8 +34,8 @@ spring:
   rabbitmq:
     host: ${RABBITMQ_HOST:localhost}
     port: ${RABBITMQ_PORT:5672}
-    username: ${RABBITMQ_USER:admin}
-    password: ${RABBITMQ_PASSWORD:admin123}
+    username: ${RABBITMQ_USER}
+    password: ${RABBITMQ_PASSWORD}
     publisher-confirm-type: correlated
     publisher-returns: true
     listener:
@@ -46,7 +46,7 @@ spring:
 
   ai:
     openai:
-      api-key: ${DEEPSEEK_API_KEY:your-deepseek-api-key}
+      api-key: ${DEEPSEEK_API_KEY}
       base-url: https://api.deepseek.com
       chat:
         options:
@@ -65,6 +65,11 @@ management:
 
 # 项目自定义配置
 seckill:
+  auth:
+    access-token-ttl-minutes: ${ACCESS_TOKEN_TTL_MINUTES:30}
+  cache:
+    active-logical-expire-seconds: ${CACHE_ACTIVE_LOGICAL_EXPIRE_SECONDS:30}
+    active-physical-expire-seconds: ${CACHE_ACTIVE_PHYSICAL_EXPIRE_SECONDS:600}
   bloom-filter:
     expected-insertions: 1000000
     fpp: 0.01
@@ -80,7 +85,7 @@ seckill:
   pending-order:
     max-retries: 10
   jwt:
-    secret: ${JWT_SECRET:your-jwt-secret-minimum-32-bytes-long}
+    secret: ${JWT_SECRET}
     access-expire-minutes: 30
     refresh-expire-days: 7
 

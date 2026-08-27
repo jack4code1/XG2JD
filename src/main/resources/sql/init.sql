@@ -12,7 +12,18 @@ CREATE TABLE IF NOT EXISTS t_user (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     last_login_at DATETIME,
+    role VARCHAR(16),
     INDEX idx_username (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 商户表必须在测试种子数据写入前创建。
+CREATE TABLE IF NOT EXISTS t_merchant (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT NOT NULL UNIQUE,
+    shop_name VARCHAR(128) NOT NULL,
+    shop_desc VARCHAR(512),
+    category VARCHAR(64),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 优惠券表
@@ -21,6 +32,7 @@ CREATE TABLE IF NOT EXISTS t_coupon (
     coupon_name VARCHAR(128) NOT NULL,
     coupon_desc VARCHAR(512),
     discount_amount DECIMAL(10,2) DEFAULT 0,
+    merchant_id BIGINT,
     total_stock INT NOT NULL,
     remain_stock INT NOT NULL,
     start_time DATETIME NOT NULL,

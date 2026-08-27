@@ -4,6 +4,7 @@ import com.google.common.hash.BloomFilter;
 import com.google.common.hash.Funnels;
 import com.seckill.cache.HotKeyDetector;
 import com.seckill.config.RabbitMQConfig;
+import com.seckill.constant.SeckillRedisKeys;
 import com.seckill.dto.OrderMessage;
 import com.seckill.dto.SeckillResponse;
 import com.seckill.scheduler.PendingOrderRecoveryScheduler;
@@ -14,7 +15,6 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
@@ -45,7 +45,7 @@ public class SeckillService {
     private final AllocationService allocationService;
     private final HotKeyDetector hotKeyDetector;
     private final MeterRegistry meterRegistry;
-    private final StringRedisTemplate stringRedisTemplate;
+    private final PendingOrderService pendingOrderService;
 
     private final DefaultRedisScript<Long> checkQualifyScript;
 
@@ -78,7 +78,7 @@ public class SeckillService {
         if (bloomFilter.mightContain(userBloomKey)) {
             log.debug("Bloom Filter 命中学: userId={}, couponId={}", userId, couponId);
             // 可能存在 → 精确查 Redis Set
-            String userSetKey = "seckill:user:" + couponId;
+            String userSetKey = SeckillRedisKeys.users(couponId);
             Boolean exists = redisTemplate.opsForSet().isMember(userSetKey, userId.toString());
             if (Boolean.TRUE.equals(exists)) {
                 return SeckillResponse.fail("您已参与过本次活动");
@@ -92,10 +92,9 @@ public class SeckillService {
         }
 
         // ──── 第三层：资格校验 + 扣库存 + 一人一单原子 Lua ────
-        String couponKey = "seckill:coupon:" + couponId;
+        String activityKey = SeckillRedisKeys.activity(couponId);
         // 记录热点访问（每次秒杀请求都上报到环形缓冲区）
-        hotKeyDetector.record(couponKey);
-        String userSetKey = "seckill:user:" + couponId;
+        hotKeyDetector.record(activityKey);
         long currentTime = Instant.now().toEpochMilli();
 
         // The order number is allocated before Lua so the script can atomically
@@ -104,18 +103,22 @@ public class SeckillService {
         long messageTimestamp = System.currentTimeMillis();
         Long qualifyResult = redisTemplate.execute(
                 checkQualifyScript,
-                List.of(couponKey, userSetKey, PendingOrderRecoveryScheduler.PENDING_ORDER_INDEX),
-                userId.toString(), String.valueOf(currentTime), "1", orderNo,
+                List.of(activityKey, SeckillRedisKeys.stock(couponId), SeckillRedisKeys.users(couponId),
+                        SeckillRedisKeys.userCount(couponId), SeckillRedisKeys.pending(couponId),
+                        PendingOrderRecoveryScheduler.PENDING_ORDER_INDEX),
+                userId.toString(), String.valueOf(currentTime), orderNo,
                 couponId.toString(), String.valueOf(weight), String.valueOf(messageTimestamp)
         );
 
         if (qualifyResult == null || qualifyResult < 0) {
             int result = qualifyResult == null ? -99 : qualifyResult.intValue();
             String reason = switch (result) {
-                case -1 -> "活动未开始或已结束";
-                case -2 -> "您已参与过本次活动";
-                case -3 -> "优惠券已抢光";
-                case -4 -> "活动已暂停";
+                case -1 -> "活动尚未开始";
+                case -2 -> "活动已结束";
+                case -3 -> "活动已暂停";
+                case -4 -> "优惠券已抢光";
+                case -5 -> "您已参与过本次活动";
+                case -6 -> "活动状态未初始化";
                 default -> "未知错误";
             };
             return SeckillResponse.fail(reason);
@@ -148,7 +151,7 @@ public class SeckillService {
             if (confirm == null || !confirm.isAck()) {
                 throw new IllegalStateException("RabbitMQ 发布确认失败");
             }
-            clearPendingOrder(orderNo);
+            pendingOrderService.markDeliveryConfirmed(orderNo, couponId);
         } catch (java.util.concurrent.TimeoutException e) {
             // 超时属于结果未知，不能盲目回补库存；订单结果接口会继续等待异步落库。
             Counter.builder("seckill.mq.confirm.timeout").register(meterRegistry).increment();
@@ -173,8 +176,4 @@ public class SeckillService {
         return Instant.now().toEpochMilli() + UUID.randomUUID().toString().substring(0, 8);
     }
 
-    private void clearPendingOrder(String orderNo) {
-        stringRedisTemplate.opsForZSet().remove(PendingOrderRecoveryScheduler.PENDING_ORDER_INDEX, orderNo);
-        stringRedisTemplate.delete(PendingOrderRecoveryScheduler.pendingOrderKey(orderNo));
-    }
 }

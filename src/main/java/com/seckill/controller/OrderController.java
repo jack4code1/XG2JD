@@ -1,5 +1,6 @@
 package com.seckill.controller;
 
+import com.seckill.common.Result;
 import com.seckill.model.Order;
 import com.seckill.model.Coupon;
 import com.seckill.dto.OrderView;
@@ -32,76 +33,76 @@ public class OrderController {
 
     /** 支付订单 */
     @PostMapping("/{orderNo}/pay")
-    public Map<String, Object> pay(@PathVariable String orderNo) {
+    public Result<Map<String, Object>> pay(@PathVariable String orderNo) {
         requireOwner(orderNo);
         if (!orderService.pay(orderNo)) {
             throw new IllegalArgumentException("订单当前状态不可支付");
         }
-        return Map.of("success", true, "orderNo", orderNo, "status", "PAYING", "message", "已创建支付单");
+        return Result.ok(Map.of("orderNo", orderNo, "status", "PAYING", "message", "已创建支付单"));
     }
 
     /** 模拟第三方支付回调，生产环境应由支付网关异步调用。 */
     @PostMapping("/{orderNo}/pay/confirm")
-    public Map<String, Object> confirmPayment(@PathVariable String orderNo) {
+    public Result<Map<String, Object>> confirmPayment(@PathVariable String orderNo) {
         requireOwner(orderNo);
         if (!orderService.paySuccess(orderNo)) {
             throw new IllegalArgumentException("支付单已失效或订单不可确认");
         }
-        return Map.of("success", true, "orderNo", orderNo, "status", "PAID", "message", "支付成功");
+        return Result.ok(Map.of("orderNo", orderNo, "status", "PAID", "message", "支付成功"));
     }
 
     /** 取消订单 */
     @PostMapping("/{orderNo}/cancel")
-    public String cancel(@PathVariable String orderNo) {
+    public Result<String> cancel(@PathVariable String orderNo) {
         requireOwner(orderNo);
-        return orderService.cancel(orderNo) ? "ok" : "fail";
+        return Result.ok(orderService.cancel(orderNo) ? "ok" : "fail");
     }
 
     /** 退款 */
     @PostMapping("/{orderNo}/refund")
-    public String refund(@PathVariable String orderNo) {
+    public Result<String> refund(@PathVariable String orderNo) {
         requireOwner(orderNo);
-        return orderService.refund(orderNo) ? "ok" : "fail";
+        return Result.ok(orderService.refund(orderNo) ? "ok" : "fail");
     }
 
     /** 查询订单 */
     @GetMapping("/{orderNo}")
-    public Order query(@PathVariable String orderNo) {
-        return requireOwner(orderNo);
+    public Result<Order> query(@PathVariable String orderNo) {
+        return Result.ok(requireOwner(orderNo));
     }
 
     /** 查询用户订单列表 */
     @GetMapping("/user/{userId}")
-    public List<Order> listByUser(@PathVariable Long userId, @RequestParam Long couponId) {
+    public Result<List<Order>> listByUser(@PathVariable Long userId, @RequestParam Long couponId) {
         if (!userId.equals(UserContext.getUserId())) {
             throw new ForbiddenException("无权查询该用户订单");
         }
-        return orderRepository.findByUserIdAndCouponId(userId, couponId);
+        return Result.ok(orderRepository.findByUserIdAndCouponId(userId, couponId));
     }
 
     /** 查询当前登录用户的全部订单，避免前端暴露或伪造 userId。 */
     @GetMapping("/user")
-    public List<OrderView> listCurrentUser() {
+    public Result<List<OrderView>> listCurrentUser() {
         Long userId = UserContext.getUserId();
         if (userId == null) {
-            return List.of();
+            return Result.ok(List.of());
         }
-        return orderRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
+        return Result.ok(orderRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
                 .map(this::toView)
-                .toList();
+                .toList());
     }
 
     @GetMapping("/user/coupons")
-    public List<java.util.Map<String, Object>> usableCoupons() {
+    public Result<List<java.util.Map<String, Object>>> usableCoupons() {
         Long userId = UserContext.getUserId();
-        return orderRepository.findByUserIdAndOrderType(userId, "COUPON_CLAIM").stream()
+        return Result.ok(orderRepository.findByUserIdAndOrderType(userId, "COUPON_CLAIM").stream()
                 .map(Order::getCouponId)
                 .filter(java.util.Objects::nonNull)
                 .distinct()
                 .map(couponRepository::findById)
                 .flatMap(java.util.Optional::stream)
                 .filter(c -> orderRepository.existsByUserIdAndCouponIdAndOrderTypeAndStatusIn(userId, c.getId(), "COUPON_CLAIM", List.of("CREATED", "PAID", "USED")))
-                .filter(c -> !orderRepository.existsByUserIdAndCouponIdAndOrderTypeAndStatusIn(userId, c.getId(), "PRODUCT_PURCHASE", List.of("CREATED", "PAYING", "PAID", "USED")))
+                .filter(c -> !orderRepository.existsByUserIdAndCouponIdAndOrderTypeAndStatusIn(userId, c.getId(), "PRODUCT_PURCHASE", List.of("PENDING_PAYMENT", "PAYING", "PAID", "USED")))
                 .map(c -> {
                     Map<String, Object> result = new java.util.HashMap<>();
                     result.put("id", c.getId());
@@ -110,7 +111,7 @@ public class OrderController {
                     result.put("merchantId", c.getMerchantId());
                     return result;
                 })
-                .toList();
+                .toList());
     }
 
     private Order requireOwner(String orderNo) {

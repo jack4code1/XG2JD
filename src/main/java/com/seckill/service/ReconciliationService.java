@@ -29,7 +29,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class ReconciliationService {
 
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final CouponSeckillStateService couponSeckillStateService;
     private final OrderRepository orderRepository;
     private final JdbcTemplate jdbcTemplate;
 
@@ -46,11 +46,8 @@ public class ReconciliationService {
 
         for (Order order : orders) {
             Long couponId = order.getCouponId();
-            String couponKey = "seckill:coupon:" + couponId;
-
             // 2. 获取 Redis 中的库存扣减记录
-            Object remainObj = redisTemplate.opsForHash().get(couponKey, "remain");
-            Integer redisRemain = remainObj != null ? Integer.parseInt(remainObj.toString()) : null;
+            Integer redisRemain = couponSeckillStateService.currentStock(couponId, -1);
 
             // 3. 从快照表获取昨日记录
             // TODO: 实现快照表的读写
