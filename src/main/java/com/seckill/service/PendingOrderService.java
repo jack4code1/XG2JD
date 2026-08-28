@@ -2,23 +2,42 @@ package com.seckill.service;
 
 import com.seckill.constant.SeckillRedisKeys;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Confirms a Redis-accepted order only after its database transaction commits. */
+import java.util.List;
+
+/** Coordinates pending-order lifecycle transitions atomically in Redis. */
 @Service
 @RequiredArgsConstructor
 public class PendingOrderService {
-    private static final long CONSUMER_CONFIRM_DELAY_MS = 5_000L;
-    private final StringRedisTemplate stringRedisTemplate;
+    public static final String PUBLISHING = "PUBLISHING";
+    public static final String RECOVERING = "RECOVERING";
+    public static final String RETRY_WAIT = "RETRY_WAIT";
+    public static final String PUBLISHED = "PUBLISHED";
 
-    public void markDeliveryConfirmed(String orderNo, Long couponId) {
-        String key = SeckillRedisKeys.pendingOrder(orderNo);
-        stringRedisTemplate.opsForHash().put(key, "state", "DELIVERED");
-        stringRedisTemplate.opsForZSet().add(SeckillRedisKeys.PENDING_ORDER_INDEX, orderNo,
-                System.currentTimeMillis() + CONSUMER_CONFIRM_DELAY_MS);
+    private final StringRedisTemplate stringRedisTemplate;
+    @Qualifier("pendingOrderTransitionScript")
+    private final DefaultRedisScript<Long> pendingOrderTransitionScript;
+
+    @Value("${seckill.pending-order.recovery-lease-ms:5000}")
+    private long recoveryLeaseMs;
+
+    @Value("${seckill.pending-order.published-reconcile-ms:30000}")
+    private long publishedReconcileMs;
+
+    /**
+     * A confirm received after the consumer committed is intentionally a no-op:
+     * the Lua transition never recreates a pending hash removed by ACK.
+     */
+    public boolean markDeliveryConfirmed(String orderNo, Long couponId) {
+        long now = System.currentTimeMillis();
+        return transition("CONFIRM_PUBLISHED", orderNo, couponId, now, now + publishedReconcileMs, 0) == 1;
     }
 
     public void acknowledgeAfterCommit(String orderNo, Long couponId) {
@@ -36,8 +55,29 @@ public class PendingOrderService {
     }
 
     public void acknowledge(String orderNo, Long couponId) {
-        stringRedisTemplate.delete(SeckillRedisKeys.pendingOrder(orderNo));
-        stringRedisTemplate.opsForZSet().remove(SeckillRedisKeys.PENDING_ORDER_INDEX, orderNo);
-        stringRedisTemplate.opsForList().remove(SeckillRedisKeys.pending(couponId), 1, orderNo);
+        transition("ACK", orderNo, couponId, System.currentTimeMillis(), 0, 0);
+    }
+
+    /** Atomically grants one recovery worker the right to republish an overdue unconfirmed order. */
+    public boolean claimRecovery(String orderNo, Long couponId, long now) {
+        return transition("CLAIM_RECOVERY", orderNo, couponId, now, now + recoveryLeaseMs, 0) == 1;
+    }
+
+    /** Schedules the next recovery attempt and returns its retry count; a negative value is terminal. */
+    public long retryLater(String orderNo, Long couponId, long now, long delayMs, int maxRetries) {
+        return transition("RETRY_LATER", orderNo, couponId, now, now + delayMs, maxRetries);
+    }
+
+    /** A confirmed message belongs to RabbitMQ; reconcile it without publishing a second copy. */
+    public void deferPublishedReconciliation(String orderNo, Long couponId, long now) {
+        transition("DEFER_PUBLISHED", orderNo, couponId, now, now + publishedReconcileMs, 0);
+    }
+
+    private long transition(String action, String orderNo, Long couponId, long now, long nextDue, int maxRetries) {
+        Long result = stringRedisTemplate.execute(pendingOrderTransitionScript,
+                List.of(SeckillRedisKeys.pendingOrder(orderNo), SeckillRedisKeys.PENDING_ORDER_INDEX,
+                        SeckillRedisKeys.pending(couponId)),
+                action, orderNo, String.valueOf(now), String.valueOf(nextDue), String.valueOf(maxRetries));
+        return result == null ? 0 : result;
     }
 }

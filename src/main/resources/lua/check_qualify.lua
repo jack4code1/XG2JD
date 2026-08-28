@@ -11,6 +11,7 @@
 -- ARGV[4]: couponId
 -- ARGV[5]: userWeight
 -- ARGV[6]: messageTimestamp
+-- ARGV[7]: firstPublishGraceMs
 -- 返回: -1=未开始, -2=已结束, -3=暂停, -4=库存不足, -5=重复领取, -6=活动状态缺失, >=0=剩余库存
 
 local activityKey = KEYS[1]
@@ -26,6 +27,8 @@ local orderNo = string.gsub(ARGV[3], '^"(.*)"$', '%1')
 local couponId = string.gsub(ARGV[4], '^"(.*)"$', '%1')
 local userWeight = string.gsub(ARGV[5], '^"(.*)"$', '%1')
 local messageTimestamp = string.gsub(ARGV[6], '^"(.*)"$', '%1')
+local firstPublishGraceRaw = string.gsub(ARGV[7], '^"(.*)"$', '%1')
+local firstPublishGraceMs = tonumber(firstPublishGraceRaw) or 5000
 
 -- 1. 活动状态和时间窗口必须在扣库存前完成校验。
 local status = redis.call('HGET', activityKey, 'status')
@@ -70,10 +73,12 @@ redis.call('HSET', pendingOrderKey,
     'user_weight', userWeight,
     'timestamp', messageTimestamp,
     'retry_count', '0',
-    'state', 'PENDING')
+    'state', 'PUBLISHING')
 redis.call('EXPIRE', pendingOrderKey, 86400)
 redis.call('RPUSH', pendingActivityKey, orderNo)
 redis.call('EXPIRE', pendingActivityKey, 86400)
-redis.call('ZADD', pendingIndexKey, currentTime, orderNo)
+-- Do not let recovery race the first publisher-confirm window. A later
+-- recovery attempt is still available if this process dies before publishing.
+redis.call('ZADD', pendingIndexKey, tonumber(currentTime) + firstPublishGraceMs, orderNo)
 
 return remain - 1

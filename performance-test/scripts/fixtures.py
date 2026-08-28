@@ -11,6 +11,7 @@ import os
 import re
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -20,6 +21,17 @@ DATA_ROOT = ROOT / "data"
 RESULT_ROOT = ROOT / "results"
 RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,40}\Z")
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def local_http_timeout():
+    raw = os.environ.get("PERF_HTTP_TIMEOUT_SECONDS", "20")
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise ValueError("PERF_HTTP_TIMEOUT_SECONDS 必须是整数") from error
+    if not 1 <= value <= 900:
+        raise ValueError("PERF_HTTP_TIMEOUT_SECONDS 必须在 1-900 秒")
+    return value
 
 
 def require_run_id(value):
@@ -71,7 +83,7 @@ class LocalApi:
             headers["Content-Type"] = "application/json"
         if token:
             headers["Authorization"] = "Bearer " + token
-        connection = http.client.HTTPConnection(self.host, self.port, timeout=20)
+        connection = http.client.HTTPConnection(self.host, self.port, timeout=local_http_timeout())
         try:
             connection.request(method, path, body=payload, headers=headers)
             response = connection.getresponse()
@@ -99,6 +111,8 @@ def merchant_token(api, merchant, password):
 
 def prepare(args):
     run_id = require_run_id(args.run_id)
+    if args.coupons_per_user < 1:
+        raise ValueError("coupons-per-user 必须至少为 1")
     api = LocalApi(args.base)
     token = merchant_token(api, args.merchant, args.password)
     fixture = api.request("POST", "/api/perf/seckill/fixtures", {
@@ -114,19 +128,32 @@ def prepare(args):
 
     destination = run_dir(DATA_ROOT, run_id)
     destination.mkdir(parents=True, exist_ok=False)
+    coupon_ids = fixture.get("couponIds", [])
+    if not coupon_ids or args.coupons_per_user > len(coupon_ids):
+        raise RuntimeError("每用户请求的优惠券数超过已创建夹具")
+
     request_file = destination / "seckill-requests.csv"
     with request_file.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         for user in users:
-            writer.writerow((user["accessToken"], user["couponId"], user["deviceFingerprint"], user["username"]))
+            if args.coupons_per_user == 1:
+                selected_coupon_ids = (user["couponId"],)
+            else:
+                # A user may validly claim once from each distinct coupon. This creates
+                # unique (userId, couponId) pairs without weakening one-user-one-coupon.
+                selected_coupon_ids = coupon_ids[:args.coupons_per_user]
+            for coupon_id in selected_coupon_ids:
+                writer.writerow((user["accessToken"], coupon_id, user["deviceFingerprint"], user["username"]))
     os.chmod(request_file, 0o600)
     manifest = {
         "run_id": run_id,
         "base_url": args.base,
         "users": len(users),
         "shops": len(fixture.get("merchantIds", [])),
-        "coupon_ids": fixture.get("couponIds", []),
+        "coupon_ids": coupon_ids,
         "stock_per_coupon": args.stock,
+        "coupons_per_user": args.coupons_per_user,
+        "request_count": len(users) * args.coupons_per_user,
         "request_file": str(request_file.relative_to(ROOT)),
     }
     (destination / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -191,28 +218,56 @@ def verify(args):
     run_id = require_run_id(args.run_id)
     request_file = require_file_under(run_dir(DATA_ROOT, run_id) / "seckill-requests.csv", run_dir(DATA_ROOT, run_id))
     jtl = require_file_under(args.jtl, run_dir(RESULT_ROOT, run_id))
-    tokens = {row[3]: row[0] for row in csv.reader(request_file.open(encoding="utf-8", newline="")) if len(row) >= 4}
     samples = list(csv.DictReader(jtl.open(encoding="utf-8-sig", newline="")))
     accepted = [row for row in samples if row.get("business_success", "").lower() == "true" and row.get("order_no")]
     if not accepted:
         raise RuntimeError("JTL 中没有业务成功的订单号")
+    accepted_by_coupon = Counter(str(row.get("coupon_id", "")) for row in accepted)
     api = LocalApi(args.base)
-    pending = {(row["order_no"], tokens.get(row.get("username", ""))) for row in accepted}
     deadline = time.monotonic() + args.timeout_seconds
-    while pending and time.monotonic() < deadline:
-        completed = set()
-        for order_no, token in pending:
-            if not token:
-                raise RuntimeError("JTL 缺少 username，无法验证异步订单")
-            data = api.request("GET", "/api/seckill/result/" + order_no, token=token)
-            if data.get("success") is True and data.get("status") == "CREATED":
-                completed.add((order_no, token))
-        pending -= completed
-        if pending:
+    audit = None
+    while time.monotonic() < deadline:
+        audit = api.request("GET", "/api/perf/seckill/fixtures/" + run_id + "/audit",
+                            token=merchant_token(api, args.merchant, args.password))
+        if audit_matches(audit, accepted_by_coupon, len(accepted)):
+            break
+        if audit.get("pendingCount", 0) or audit.get("orderCount", 0) < len(accepted):
             time.sleep(0.5)
-    if pending:
-        raise RuntimeError(f"{len(pending)} 个订单未在时限内落库")
-    print(json.dumps({"run_id": run_id, "verified_orders": len(accepted), "status": "CREATED"}, ensure_ascii=False))
+    if audit is None or not audit_matches(audit, accepted_by_coupon, len(accepted)):
+        raise RuntimeError("异步订单、库存或 pending 状态未在时限内收敛")
+    verification = {
+        "run_id": run_id,
+        "accepted_requests": len(accepted),
+        "system_error_requests": sum(row.get("success", "").lower() != "true" for row in samples),
+        "audit": audit,
+        "stock_consistent": True,
+        "no_negative_stock": True,
+        "no_duplicate_claim": True,
+        "pending_drained": True,
+    }
+    output = run_dir(RESULT_ROOT, run_id) / "verification.json"
+    output.write_text(json.dumps(verification, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps(verification, ensure_ascii=False, indent=2))
+
+
+def audit_matches(audit, accepted_by_coupon, accepted_total):
+    if audit.get("orderCount") != accepted_total or audit.get("pendingCount") != 0:
+        return False
+    if audit.get("duplicateClaimPairs") != 0:
+        return False
+    coupons = audit.get("coupons")
+    if not isinstance(coupons, list):
+        return False
+    for coupon in coupons:
+        coupon_id = str(coupon.get("couponId", ""))
+        accepted = accepted_by_coupon.get(coupon_id, 0)
+        initial = coupon.get("initialStock")
+        remaining = coupon.get("remainingStock")
+        if (not isinstance(initial, int) or not isinstance(remaining, int) or remaining < 0
+                or initial - remaining != accepted or coupon.get("claimantCount") != accepted
+                or coupon.get("pendingCount") != 0 or coupon.get("orderCount") != accepted):
+            return False
+    return True
 
 
 def main():
@@ -228,6 +283,7 @@ def main():
     prepare_parser.add_argument("--shops", type=int, default=1)
     prepare_parser.add_argument("--coupons", type=int, default=1)
     prepare_parser.add_argument("--stock", type=int, default=200)
+    prepare_parser.add_argument("--coupons-per-user", type=int, default=1)
     prepare_parser.set_defaults(func=prepare)
 
     cleanup_parser = commands.add_parser("cleanup")

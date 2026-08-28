@@ -50,4 +50,12 @@ public class RedisConfig {
         script.setResultType(Long.class);
         return script;
     }
+
+    @Bean("pendingOrderTransitionScript")
+    public DefaultRedisScript<Long> pendingOrderTransitionScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("lua/pending_order_transition.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
 }

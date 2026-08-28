@@ -66,6 +66,25 @@ The JMeter plan accepts `baseUrl`, `token`, `threads`, `duration`, `rampUp`, `co
 
 `summary.json` includes total requests, API-success requests, business-success requests, business rejections, transport/API error rate, QPS, average, P50, P95, P99, and max latency. Business rejections such as sold-out or duplicate claims are reported separately and are not transport/API errors.
 
+## Lua Acceptance Matrix
+
+The matrix invokes the real authenticated `POST /api/seckill/execute` route. It therefore measures the complete acceptance path: Redis-backed token lookup and renewal, allocation strategies, the Lua execution, RabbitMQ publisher confirmation, and the Redis pending-order update. It is not a raw Redis `EVAL` benchmark.
+
+Each formal batch uses 5,000 distinct fixture users, one active coupon, and stock of 10,000. Every CSV row is consumed once, so no request is rejected due to one-user-one-coupon. The finite batch produces an average QPS over all accepted requests rather than a misleading one-second peak. The `perf`-profile audit endpoint checks final Redis stock, claimant cardinality, pending count, persisted order count, and duplicate `(userId, couponId)` pairs before cleanup.
+
+```sh
+export PERF_MERCHANT_PASSWORD='your-local-merchant-password'
+./performance-test/scripts/run-lua-matrix.sh lua_20260828
+```
+
+It warms the JVM, Redis connections, loaded Lua script, and RabbitMQ publisher path first, then runs 50, 100, 200, and 500 virtual users. Add 1000 only after the first matrix is healthy:
+
+```sh
+PERF_SECKILL_THREADS=1000 ./performance-test/scripts/run-lua-matrix.sh lua_20260828_1000
+```
+
+Results are written to `performance-test/results/<run-id>_t<threads>/`; the consolidated table is `<run-id>-report.md`. Generated tokens stay in ignored CSV files.
+
 ## Cleanup
 
 Wait for `verify` to pass before cleanup. Cleanup only matches the exact `perf_seckill_*<run-id>*` fixture names, removes its tracked short-lived access sessions, and refuses to run while an order remains pending.

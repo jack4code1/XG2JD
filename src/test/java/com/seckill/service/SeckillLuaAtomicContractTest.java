@@ -47,6 +47,10 @@ class SeckillLuaAtomicContractTest {
             assertTrue(script.contains("redis.call('RPUSH', pendingActivityKey, orderNo)"));
             assertTrue(script.contains("if status == '0' then return -1 end"));
             assertTrue(script.contains("if status == '2' then return -2 end"));
+            assertTrue(script.contains("'state', 'PUBLISHING'"));
+            assertTrue(script.contains("firstPublishGraceRaw"));
+            assertTrue(script.contains("tonumber(firstPublishGraceRaw)"));
+            assertTrue(script.contains("tonumber(currentTime) + firstPublishGraceMs"));
         }
     }
 }

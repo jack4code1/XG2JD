@@ -206,57 +206,15 @@ seckill.caffeine.hit.rate
 
 ## 10. 压测和验收
 
-最新实测报告见 `docs/BENCHMARK_REPORT.md`。JMeter 脱敏汇总位于 `docs/jmeter-results-2026-08-20.json`，测试计划为 `scripts/jmeter/seckill-load.jmx`，夹具与结果汇总工具为 `scripts/jmeter_benchmark.py`。历史 Python 原始 JSON 位于 `docs/benchmark-results-2026-08-19*.json`，脚本为 `scripts/benchmark_matrix.py`。
+当前唯一可用于对外陈述的性能结论和复现说明见 [PERFORMANCE_TEST_HANDOVER.md](PERFORMANCE_TEST_HANDOVER.md)。历史基准报告和原始 JSON 因测试时长、数据口径或修复前状态不满足当前可信度要求，已从仓库移除。
 
-2026-08-20 JMeter 5.6.3 单机实测摘要：
+2026-08-28 P0 本地单实例复测摘要：
 
-- 200 并发、200 req/s 持续 10 分钟，共 120,000 请求：HTTP 与业务成功率 100%，P50 48 ms、P95 77 ms、P99 104 ms，0 重复订单号。
-- MQ 清空后，30 个活动的 MySQL 订单数和唯一订单号均为 120,000，Redis 库存全部为 0，死信队列为 0。
-- 库存 100、200 并发、1,000 请求：仅成功 100；同一用户 100 并发、100 请求：仅成功 1。
-- 容量上探以“业务成功率 100% 且 P99 < 2 秒”为标准，最高稳定验证并发为 200；400 并发出现 30 次连接拒绝，800 并发错误率 4.95%。
-- 稳定性测试暴露自定义监听器工厂未应用 Boot 消费参数：修复前实际仅 1 个消费者、恢复约 26.4 orders/s；修复后运行时 20–40 消费者的峰值恢复约 117.8 orders/s。
-- 稳定性实验的 199.89 req/s 是受控输入速率，不是系统最大 QPS；容量实验与 JMeter、应用、中间件同机，不能外推为生产集群能力。
+- 缓存读取：100 并发、三轮 65 秒正式采样的中位数，MySQL 直查约 4.3k QPS / P99 44 ms，Redis 约 10.5k QPS / P99 12 ms，Caffeine + Redis 约 12.8k QPS / P99 10 ms。
+- Redis Lua 受理路径：50 并发为当前最大稳定档位，三轮中位数约 690 QPS、P99 108 ms、系统错误率 0；三轮均无超卖、重复领取或 pending 残留。
+- RabbitMQ：保留 5,000 独立用户的正确性验收结论，不保留未完成同步对照的性能倍数结论。
 
-2026-08-19 单机实测摘要：
-
-- 10/50/100/200 并发矩阵独立执行 3 轮，共 4,800 请求，成功率 100%，0 重复订单、0 MQ 落库缺失。
-- 200 并发、2,000 请求持续实验：419.44 req/s，P50 462.84 ms，P99 491.31 ms。
-- 库存 100、300 请求售罄实验执行 4 轮，每轮仅成功 100，最终库存 0。
-- 同一用户 50 并发、100 请求执行 4 轮，每轮仅成功 1，最终库存 99。
-- 全部实验的 Prometheus 成功计数、MySQL 订单数和唯一订单号数量均为 7,324。
-
-准备 `/tmp/seckill_tokens.txt` 后执行：
-
-```bash
-python3 scripts/bench_pure.py <couponId> <并发数> <请求数>
-```
-
-JMeter 复现入口：
-
-```powershell
-python scripts/jmeter_benchmark.py prepare-suite --users 4000 --output target/jmeter-data
-jmeter -n -t scripts/jmeter/seckill-load.jmx -Jdata_file=<csv> -Jthreads=200 -Jloops=600
-```
-
-JTL 会包含临时 Token，只能保存在 Git 已忽略的 `target/`，不得直接提交；仓库只保留脱敏 JSON 汇总。
-
-脚本输出成功数、Redis 剩余库存、P50/P99、重复订单号和 PASS/FAIL。验收标准：
-
-- 成功订单数不超过库存数
-- 重复订单号为 0
-- Redis 库存不小于 0
-- MQ 消费后 MySQL 库存与 Redis 最终一致
-
-AI 固定评测：
-
-```bash
-curl -X POST http://localhost:8080/api/ai/eval \
-  -H "Authorization: Bearer <merchant-token>"
-```
-
-2026-08-19 本机验证：`mvn test` 通过 4/4，`mvn -DskipTests package`、`mvn test-compile` 和前端 `npm run build` 均通过。Lua 原子契约测试位于：
-
-`src/test/java/com/seckill/service/SeckillLuaAtomicContractTest.java`
+JTL 可能包含短期令牌，持续保存在 Git 忽略目录中；仓库只提交脱敏交接结论和复现脚本。严禁把本地单实例数值描述为生产集群容量。
 
 ## 11. 常见问题
 

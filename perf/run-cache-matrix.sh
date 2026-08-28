@@ -54,8 +54,11 @@ run_jmeter() {
     *) echo "unexpected cache case: $cache_case" >&2; exit 2 ;;
   esac
 
+  local jtl_path="$ROOT_DIR/target/perf-cache/$RUN_ID/${cache_case}-${threads}-${suffix}.jtl"
+  # The JMeter CLI appends to an existing JTL. Each formal sample must start clean.
+  rm -f "$jtl_path"
   JVM_ARGS="$JMETER_JVM_ARGS" "$JMETER" -n -t "$ROOT_DIR/perf/cache-test.jmx" \
-    -l "$ROOT_DIR/target/perf-cache/$RUN_ID/${cache_case}-${threads}-${suffix}.jtl" \
+    -l "$jtl_path" \
     -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" \
     -Jstrategy="$strategy" \
     -Jdata_file="$ROOT_DIR/target/perf-cache/$RUN_ID/requests.csv" \

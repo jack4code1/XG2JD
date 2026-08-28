@@ -20,7 +20,7 @@ The helper accepts only a localhost HTTP endpoint. It creates exactly 100 coupon
 python3 perf/cache_benchmark.py --base http://127.0.0.1:18080 prepare --run-id cache_20260827
 ```
 
-This writes the JMeter dataset and a non-secret manifest to `target/perf-cache/cache_20260827/`. The request list uses 80% traffic across ten hot coupons and 20% across the remaining ninety coupons.
+This writes the JMeter dataset and a non-secret manifest to `target/perf-cache/cache_20260827/`. The request list uses 80% traffic across ten hot coupons and 20% across the remaining ninety coupons. `setup-case` refreshes the CSV's JWT immediately before each JMeter sample while retaining the exact coupon IDs and request mix, so a resumed matrix cannot measure an expired login response.
 
 ## Cases
 
@@ -41,7 +41,7 @@ export PERF_MERCHANT_PASSWORD='local-merchant-password'
 ./perf/run-cache-matrix.sh cache_20260827
 ```
 
-`JMETER_JVM_ARGS` defaults to `-Xms512m -Xmx512m -XX:+UseG1GC` for every JMeter invocation. Start the application with fixed JVM options too, for example `JAVA_TOOL_OPTIONS='-Xms512m -Xmx512m -XX:+UseG1GC'`. The script writes JTL files, per-sample JSON, and `report.md` under `target/perf-cache/<run-id>/`; tokens are kept only in the ignored request CSV.
+`JMETER_JVM_ARGS` defaults to `-Xms512m -Xmx512m -XX:+UseG1GC` for every JMeter invocation. Start the application with fixed JVM options too, for example `JAVA_TOOL_OPTIONS='-Xms512m -Xmx512m -XX:+UseG1GC'`. Before every JMeter run, the runner clears that sample's JTL because the JMeter CLI appends to an existing file. The script writes JTL files, per-sample JSON, and `report.md` under `target/perf-cache/<run-id>/`; tokens are kept only in the ignored request CSV.
 
 If a terminal/session time limit requires splitting a long matrix, reuse the same prepared run and select only the remaining fixed cases/threads. Each selected sample still republishes its identical snapshot, prewarms, and resets metrics before collection:
 

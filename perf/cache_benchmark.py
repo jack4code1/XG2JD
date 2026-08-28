@@ -87,6 +87,19 @@ def load_manifest(run_id: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def write_dataset(manifest: dict, token: str, dataset_rows: int):
+    """Keep coupon selection stable while replacing a potentially expired JWT."""
+    dataset = Path(manifest["dataset"])
+    coupon_ids = manifest["coupon_ids"]
+    hot_ids = manifest["hot_coupon_ids"]
+    with dataset.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        for index in range(dataset_rows):
+            # Four of every five rows target one of ten designated hot coupons.
+            coupon_id = hot_ids[index % len(hot_ids)] if index % 5 else coupon_ids[10 + (index // 5) % 90]
+            writer.writerow((coupon_id, token))
+
+
 def prepare(args):
     run_id = require_run_id(args.run_id)
     api = LocalApi(args.base)
@@ -100,22 +113,16 @@ def prepare(args):
 
     destination = run_directory(run_id)
     destination.mkdir(parents=True, exist_ok=True)
-    dataset = destination / "requests.csv"
-    with dataset.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle)
-        for index in range(args.dataset_rows):
-            # Four of every five rows target one of ten designated hot coupons.
-            coupon_id = hot_ids[index % len(hot_ids)] if index % 5 else coupon_ids[10 + (index // 5) % 90]
-            writer.writerow((coupon_id, token))
     manifest = {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "base": args.base,
         "coupon_ids": coupon_ids,
         "hot_coupon_ids": hot_ids,
-        "dataset": str(dataset),
+        "dataset": str(destination / "requests.csv"),
         "distribution": "80% across 10 hot coupons; 20% across 90 normal coupons",
     }
+    write_dataset(manifest, token, args.dataset_rows)
     (destination / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print(json.dumps({key: value for key, value in manifest.items() if key != "token"}, indent=2))
 
@@ -124,6 +131,8 @@ def set_up_case(args):
     manifest = load_manifest(args.run_id)
     api = LocalApi(args.base)
     token = merchant_token(api, args.merchant, args.password)
+    # Refresh only credentials before every JMeter sample. Coupon IDs and request mix stay fixed.
+    write_dataset(manifest, token, args.dataset_rows)
     coupon_ids = manifest["coupon_ids"]
     if args.case == "mysql":
         body = {"couponIds": coupon_ids, "clearL1": True, "clearRedis": False, "resetMetrics": True}
@@ -233,6 +242,7 @@ def main():
     setup_parser = subparsers.add_parser("setup-case")
     setup_parser.add_argument("--run-id", required=True)
     setup_parser.add_argument("--case", choices=("mysql", "redis", "caffeine"), required=True)
+    setup_parser.add_argument("--dataset-rows", type=int, default=10000)
     setup_parser.set_defaults(func=set_up_case)
 
     collect_parser = subparsers.add_parser("collect")

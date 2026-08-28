@@ -1,6 +1,7 @@
 package com.seckill.controller;
 
 import com.seckill.common.Result;
+import com.seckill.config.RabbitMQConfig;
 import com.seckill.constant.SeckillRedisKeys;
 import com.seckill.exception.ForbiddenException;
 import com.seckill.model.Coupon;
@@ -16,14 +17,20 @@ import com.seckill.repository.UserRepository;
 import com.seckill.service.CouponCacheService;
 import com.seckill.service.CouponSeckillStateService;
 import com.seckill.service.TokenService;
+import com.seckill.perf.PerfOrderConsumerMetrics;
 import com.seckill.util.UserContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Profile;
+import org.springframework.amqp.core.AmqpAdmin;
+import org.springframework.amqp.rabbit.core.RabbitAdmin;
+import com.zaxxer.hikari.HikariDataSource;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -36,10 +43,12 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
+import javax.sql.DataSource;
 
 /** Local-only fixtures for reproducible seckill smoke and load tests. */
 @Profile("perf")
@@ -66,6 +75,9 @@ public class PerfSeckillFixtureController {
     private final TokenService tokenService;
     private final RedisTemplate<String, Object> redisTemplate;
     private final StringRedisTemplate stringRedisTemplate;
+    private final PerfOrderConsumerMetrics perfOrderConsumerMetrics;
+    private final AmqpAdmin amqpAdmin;
+    private final DataSource dataSource;
     private final SecureRandom secureRandom = new SecureRandom();
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
@@ -119,6 +131,62 @@ public class PerfSeckillFixtureController {
         return Result.ok(Map.of("runId", runId, "deletedCoupons", coupons.size(),
                 "deletedOrders", orders.size(), "deletedUsers", users.size(),
                 "deletedShops", merchants.size()));
+    }
+
+    /**
+     * Aggregates only fixtures belonging to one validated local performance run.
+     * It lets the load harness verify Redis acceptance and asynchronous persistence
+     * without issuing one order-status request per successful claim.
+     */
+    @GetMapping("/fixtures/{runId}/audit")
+    @Transactional(readOnly = true)
+    public Result<FixtureAuditResponse> auditFixtures(@PathVariable String runId) {
+        requireMerchant();
+        String checkedRunId = requireRunId(runId);
+        List<Coupon> coupons = couponRepository.findByCouponNameStartingWith(COUPON_PREFIX + checkedRunId + "_");
+        List<Long> couponIds = coupons.stream().map(Coupon::getId).toList();
+        List<Order> orders = couponIds.isEmpty() ? List.of() : orderRepository.findByCouponIdIn(couponIds);
+
+        Set<String> claimPairs = new HashSet<>();
+        long duplicateClaimPairs = 0;
+        for (Order order : orders) {
+            if (!claimPairs.add(order.getUserId() + ":" + order.getCouponId())) duplicateClaimPairs++;
+        }
+
+        List<CouponAudit> couponAudits = coupons.stream().map(coupon -> {
+            String rawStock = stringRedisTemplate.opsForValue().get(SeckillRedisKeys.stock(coupon.getId()));
+            long remainingStock = parseRedisStock(rawStock);
+            Long claimantCount = stringRedisTemplate.opsForSet().size(SeckillRedisKeys.users(coupon.getId()));
+            Long pendingCount = stringRedisTemplate.opsForList().size(SeckillRedisKeys.pending(coupon.getId()));
+            long orderCount = orders.stream().filter(order -> coupon.getId().equals(order.getCouponId())).count();
+            return new CouponAudit(coupon.getId(), coupon.getTotalStock(), remainingStock,
+                    claimantCount == null ? 0 : claimantCount, pendingCount == null ? 0 : pendingCount, orderCount);
+        }).toList();
+
+        return Result.ok(new FixtureAuditResponse(checkedRunId, couponAudits, orders.size(),
+                duplicateClaimPairs, couponAudits.stream().mapToLong(CouponAudit::pendingCount).sum(),
+                pendingOrderIndexSize()));
+    }
+
+    @PostMapping("/runtime/reset")
+    public Result<Map<String, Object>> resetRuntimeMetrics() {
+        requireMerchant();
+        perfOrderConsumerMetrics.reset();
+        return Result.ok(Map.of("reset", true));
+    }
+
+    @GetMapping("/runtime")
+    public Result<Map<String, Object>> runtimeMetrics() {
+        requireMerchant();
+        var queue = amqpAdmin.getQueueProperties(RabbitMQConfig.ORDER_CREATE_QUEUE);
+        var deadLetterQueue = amqpAdmin.getQueueProperties(RabbitMQConfig.DEAD_LETTER_QUEUE);
+        long readyMessages = propertyCount(queue, RabbitAdmin.QUEUE_MESSAGE_COUNT);
+        long consumers = propertyCount(queue, RabbitAdmin.QUEUE_CONSUMER_COUNT);
+        Map<String, Object> hikari = hikariSnapshot();
+        return Result.ok(Map.of("queueReady", readyMessages, "queueConsumers", consumers,
+                "deadLetterReady", propertyCount(deadLetterQueue, RabbitAdmin.QUEUE_MESSAGE_COUNT),
+                "pendingOrderIndex", pendingOrderIndexSize(), "consumer", perfOrderConsumerMetrics.snapshot(),
+                "hikari", hikari));
     }
 
     private List<Long> createMerchants(String runId, int shopCount, String passwordHash) {
@@ -227,10 +295,47 @@ public class PerfSeckillFixtureController {
         return TOKEN_INDEX_PREFIX + runId;
     }
 
+    private long parseRedisStock(String rawStock) {
+        if (rawStock == null) return -1;
+        try {
+            return Long.parseLong(rawStock);
+        } catch (NumberFormatException error) {
+            throw new IllegalStateException("测试库存 Redis 值非法");
+        }
+    }
+
+    private long pendingOrderIndexSize() {
+        Long size = stringRedisTemplate.opsForZSet().size(SeckillRedisKeys.PENDING_ORDER_INDEX);
+        return size == null ? 0 : size;
+    }
+
+    private Map<String, Object> hikariSnapshot() {
+        if (!(dataSource instanceof HikariDataSource hikari)) return Map.of();
+        var bean = hikari.getHikariPoolMXBean();
+        if (bean == null) return Map.of();
+        return Map.of("active", bean.getActiveConnections(), "idle", bean.getIdleConnections(),
+                "total", bean.getTotalConnections(), "waiting", bean.getThreadsAwaitingConnection());
+    }
+
+    private long propertyCount(java.util.Properties properties, Object key) {
+        if (properties == null) return -1;
+        Object value = properties.get(key);
+        if (value instanceof Number number) return number.longValue();
+        try {
+            return Long.parseLong(String.valueOf(value));
+        } catch (NumberFormatException error) {
+            return -1;
+        }
+    }
+
     public record FixtureRequest(String runId, Integer userCount, Integer shopCount,
                                  Integer couponCount, Integer stockPerCoupon) {}
     public record CleanupRequest(String runId) {}
     public record FixtureUser(String username, String accessToken, Long couponId, String deviceFingerprint) {}
     public record FixtureResponse(String runId, List<Long> merchantIds, List<Long> couponIds,
                                   List<FixtureUser> users) {}
+    public record CouponAudit(Long couponId, long initialStock, long remainingStock,
+                              long claimantCount, long pendingCount, long orderCount) {}
+    public record FixtureAuditResponse(String runId, List<CouponAudit> coupons, long orderCount,
+                                       long duplicateClaimPairs, long pendingCount, long pendingOrderIndexCount) {}
 }

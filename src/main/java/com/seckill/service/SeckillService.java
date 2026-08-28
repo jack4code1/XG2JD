@@ -57,6 +57,9 @@ public class SeckillService {
     @Value("${seckill.bloom-filter.fpp:0.01}")
     private double fpp;
 
+    @Value("${seckill.pending-order.initial-publish-grace-ms:5000}")
+    private long initialPublishGraceMs;
+
     @PostConstruct
     public void initBloomFilter() {
         bloomFilter = BloomFilter.create(
@@ -107,7 +110,8 @@ public class SeckillService {
                         SeckillRedisKeys.userCount(couponId), SeckillRedisKeys.pending(couponId),
                         PendingOrderRecoveryScheduler.PENDING_ORDER_INDEX),
                 userId.toString(), String.valueOf(currentTime), orderNo,
-                couponId.toString(), String.valueOf(weight), String.valueOf(messageTimestamp)
+                couponId.toString(), String.valueOf(weight), String.valueOf(messageTimestamp),
+                String.valueOf(initialPublishGraceMs)
         );
 
         if (qualifyResult == null || qualifyResult < 0) {

@@ -3,13 +3,14 @@ package com.seckill.service;
 import com.seckill.config.RabbitMQConfig;
 import com.seckill.dto.OrderMessage;
 import com.seckill.model.EventLog;
-import com.seckill.model.Order;
+import com.seckill.perf.PerfOrderConsumerMetrics;
 import com.seckill.repository.EventLogRepository;
 import com.seckill.repository.OrderRepository;
 import com.seckill.repository.CouponRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,30 +34,27 @@ public class OrderCreateConsumer {
     private final EventLogRepository eventLogRepository;
     private final CouponRepository couponRepository;
     private final PendingOrderService pendingOrderService;
+    private final ObjectProvider<PerfOrderConsumerMetrics> perfOrderConsumerMetrics;
 
     @RabbitListener(queues = RabbitMQConfig.ORDER_CREATE_QUEUE)
     @Transactional(rollbackFor = Exception.class)
     public void handleOrderCreate(OrderMessage message) {
+        long startedAt = System.nanoTime();
+        PerfOrderConsumerMetrics.Outcome outcome = PerfOrderConsumerMetrics.Outcome.FAILED;
+        try {
         log.info("收到订单创建消息: orderNo={}, userId={}, couponId={}",
                 message.getOrderNo(), message.getUserId(), message.getCouponId());
 
-        // 1. 幂等检查
-        if (orderRepository.findByOrderNo(message.getOrderNo()).isPresent()) {
+        // 1. The INSERT itself is the concurrency-safe idempotency gate.
+        int inserted = orderRepository.insertCouponClaimIfAbsent(message.getOrderNo(), message.getUserId(),
+                message.getCouponId(), message.getAmount() != null ? message.getAmount() : java.math.BigDecimal.ZERO);
+        if (inserted == 0) {
             log.warn("订单已存在，跳过: orderNo={}", message.getOrderNo());
             pendingOrderService.acknowledgeAfterCommit(message.getOrderNo(), message.getCouponId());
+            outcome = PerfOrderConsumerMetrics.Outcome.DUPLICATE;
             return;
         }
-
-        // 2. 写入订单表
-        Order order = new Order();
-        order.setOrderNo(message.getOrderNo());
-        order.setUserId(message.getUserId());
-        order.setCouponId(message.getCouponId());
-        order.setOrderType("COUPON_CLAIM");
-        order.setStatus("CREATED");
-        order.setAmount(message.getAmount() != null ? message.getAmount() : java.math.BigDecimal.ZERO);
-        order.setVersion(0);
-        orderRepository.saveAndFlush(order);
+        if (inserted != 1) throw new IllegalStateException("订单幂等写入返回异常: " + inserted);
 
         // Redis 是秒杀实时库存，订单落库后同步 MySQL 展示库存，保证商家端和数据库最终一致。
         if (couponRepository.decrementRemainStock(message.getCouponId()) != 1) {
@@ -80,5 +78,11 @@ public class OrderCreateConsumer {
         pendingOrderService.acknowledgeAfterCommit(message.getOrderNo(), message.getCouponId());
 
         log.info("订单创建成功: orderNo={}", message.getOrderNo());
+        outcome = PerfOrderConsumerMetrics.Outcome.CREATED;
+        } finally {
+            // Perf-only observer: it times the actual consumer method without changing acknowledgements.
+            PerfOrderConsumerMetrics.Outcome observedOutcome = outcome;
+            perfOrderConsumerMetrics.ifAvailable(metrics -> metrics.record(observedOutcome, System.nanoTime() - startedAt));
+        }
     }
 }

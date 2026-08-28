@@ -84,6 +84,9 @@ seckill:
     expire-minutes: 15
   pending-order:
     max-retries: 10
+    initial-publish-grace-ms: 5000
+    recovery-lease-ms: 5000
+    published-reconcile-ms: 30000
   jwt:
     secret: ${JWT_SECRET}
     access-expire-minutes: 30
