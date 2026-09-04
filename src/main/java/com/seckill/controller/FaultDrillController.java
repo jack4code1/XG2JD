@@ -12,7 +12,7 @@ import com.seckill.util.UserContext;
 /**
  * 故障演练接口
  *
- * 面试可讲：
+ * 设计说明：
  * - 4个演练场景，每个场景记录注入时间+系统反应+恢复时间
  * - 通过 /actuator/metrics 实时观测指标变化
  * - 演练结束产出报告 → fault-drill-report.md

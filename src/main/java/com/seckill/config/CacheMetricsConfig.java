@@ -12,7 +12,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Prometheus 自定义指标注册
  *
- * 面试可讲：
+ * 设计说明：
  * - Micrometer 是指标门面，Prometheus 是具体实现
  * - 自定义指标：热点Key数量、Caffeine命中率、秒杀请求计数
  * - Grafana 面板可视化展示，压测时实时观察

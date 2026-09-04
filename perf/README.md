@@ -20,7 +20,7 @@ The helper accepts only a localhost HTTP endpoint. It creates exactly 100 coupon
 python3 perf/cache_benchmark.py --base http://127.0.0.1:18080 prepare --run-id cache_20260827
 ```
 
-This writes the JMeter dataset and a non-secret manifest to `target/perf-cache/cache_20260827/`. The request list uses 80% traffic across ten hot coupons and 20% across the remaining ninety coupons. `setup-case` refreshes the CSV's JWT immediately before each JMeter sample while retaining the exact coupon IDs and request mix, so a resumed matrix cannot measure an expired login response.
+This writes the JMeter dataset and a non-secret manifest to `target/perf-cache/cache_20260827/`. The request list uses 80% traffic across ten hot coupons and 20% across the remaining ninety coupons. `setup-case` refreshes the CSV's JWT immediately before each JMeter sample while retaining the exact coupon IDs and request mix, so a continued matrix cannot measure an expired login response.
 
 ## Cases
 

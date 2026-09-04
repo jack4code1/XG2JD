@@ -13,7 +13,7 @@ import java.util.Map;
 /**
  * Canal 缓存同步消费者
  *
- * 面试可讲：
+ * 设计说明：
  * - MySQL Binlog → Canal → RabbitMQ → 本消费者 → 更新 Redis + 失效 Caffeine
  * - Canal 只管推送 Binlog 变更，应用只管消费，职责清晰
  * - 幂等设计：消息体包含 binlogPosition，已消费位置跳过

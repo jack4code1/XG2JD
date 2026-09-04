@@ -30,7 +30,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 /**
  * 秒杀核心服务
  *
- * 面试可讲：
+ * 设计说明：
  * - 三层漏斗：Bloom Filter预筛 → 资格校验Lua → 库存扣减Lua
  * - MQ后置：只有扣库存成功的用户才发消息，保护MQ不被无效请求淹没
  * - 双Lua脚本分工：高频扣库存脚本<3ms，资格校验脚本<5ms

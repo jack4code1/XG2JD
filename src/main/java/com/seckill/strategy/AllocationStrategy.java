@@ -2,7 +2,7 @@ package com.seckill.strategy;
 
 /**
  * 优惠券分配策略接口 — 策略模式
- * 面试可讲：策略模式解耦分配逻辑，新增策略无需修改核心代码
+ * 设计说明：策略模式解耦分配逻辑，新增策略无需修改核心代码。
  */
 public interface AllocationStrategy {
 
@@ -20,7 +20,7 @@ public interface AllocationStrategy {
     int getPriority();
 
     /**
-     * 策略名称（用于日志和面试展示）
+     * 策略名称，用于日志与管理界面展示。
      */
     String getName();
 }

@@ -85,7 +85,7 @@ Evidence:
 
 No new RabbitMQ performance benchmark was run for this P0 retest. The retained correctness acceptance result is: 5,000 independent users produced 5,000 valid orders after the pending/publisher-confirm race fix; no duplicate business order remained, and pending and DLQ were both drained. This is a correctness result, not a QPS or latency comparison.
 
-## Resume Candidate Statements
+## Key Findings
 
 - Built a Caffeine + Redis two-level cache for hot activity reads. In a local single-instance benchmark at 100 concurrency with three 65-second runs, the adopted median improved throughput from about 4.3k QPS for MySQL direct reads to about 12.8k QPS, while P99 fell from 44 ms to 10 ms; Caffeine hit rate was about 99.99%.
 - Consolidated activity validation, stock decrement, duplicate-claim checks and pending creation into one Redis Lua execution. In a local single-instance benchmark at 50 concurrency with three 65-second runs, the adopted stable result was about 690 QPS with 108 ms P99, zero system errors, no oversell or duplicate claims, and no pending residue.

@@ -14,7 +14,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
 /**
  * 认证拦截器
  *
- * 面试可讲：
+ * 设计说明：
  * - preHandle: 从Header提取Token → Redis 查会话并续期 → set ThreadLocal
  * - afterCompletion: 必须 UserContext.clear()，防止线程池串数据
  */

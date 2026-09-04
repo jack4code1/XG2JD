@@ -11,7 +11,7 @@ import java.time.format.DateTimeFormatter;
 /**
  * 沉睡用户唤醒策略：30天未活跃用户权重 +30
  *
- * 面试可讲：
+ * 设计说明：
  * - 用 Redis Set 记录每日活跃用户（user:active:{date}），TTL 32天
  * - 检查近30天 Set 中是否有该用户 → 都没有 = 沉睡用户
  * - 相比查 MySQL 用户表 last_login_at，Redis O(1) 性能高一个数量级

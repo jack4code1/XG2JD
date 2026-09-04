@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * 热点发现引擎 — 时间片环形缓冲区
  *
- * 面试可讲：
+ * 设计说明：
  * - 环形数组 12 个槽 × 5 秒/槽 = 60 秒滑动窗口
  * - O(1) 写入（ConcurrentHashMap.computeIfAbsent + AtomicLong.increment）
  * - O(槽位数) 查询热点（12 次 Map.get，< 1ms）

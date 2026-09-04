@@ -3,7 +3,7 @@ package com.seckill.util;
 /**
  * 设备指纹工具类
  *
- * 面试可讲：
+ * 设计说明：
  * - 采集 Canvas Fingerprint + WebGL + 屏幕信息 → SHA256
  * - 不依赖 Cookie/LocalStorage，清缓存无法绕过
  * - 生产环境建议用专业 SDK（如数美、网易易盾）

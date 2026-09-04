@@ -14,7 +14,7 @@ import java.util.UUID;
 /**
  * JWT 工具类
  *
- * 面试可讲：
+ * 设计说明：
  * - Access Token 30min 无状态 + Refresh Token 7天 Redis存储
  * - jti (JWT ID) 用于登出黑名单定位
  * - 签名算法 HS256，SecretKey 从配置注入

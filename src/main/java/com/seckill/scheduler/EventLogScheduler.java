@@ -29,7 +29,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * 本地消息表扫描调度器 — 指数退避重试
  *
- * 面试可讲：
+ * 设计说明：
  * - 定时扫 event_log 表（每秒），捞待发送消息批量投递
  * - 指数退避：1s → 2s → 4s → 8s → 16s → 30s（封顶）
  * - 超过 max_retry(10次) → status=3 终态 → 人工介入告警

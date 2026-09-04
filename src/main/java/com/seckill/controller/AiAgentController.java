@@ -18,7 +18,7 @@ import java.util.List;
 /**
  * AI Agent API — Multi-Agent 运营团队入口
  *
- * 面试可讲：
+ * 设计说明：
  * - POST /api/ai/campaign/plan → 4个Agent并行策划活动
  * - 商家自然语言输入 → AI自动分析+推荐+生成文案
  */

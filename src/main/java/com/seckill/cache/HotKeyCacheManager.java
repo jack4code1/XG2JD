@@ -21,7 +21,7 @@ import java.util.function.Supplier;
 /**
  * 热点缓存管理器 — 动态升降级
  *
- * 面试可讲：
+ * 设计说明：
  * - NORMAL 模式：expireAfterWrite(5min)，读缓存未命中 → 查 Redis → 回填
  * - HOT 模式：refreshAfterWrite(30s) + 逻辑过期，读缓存发现逻辑过期 → 返回旧值 + 异步刷新
  * - 自动降级：HotKeyDetector 连续3轮低于阈值 → 恢复 NORMAL 模式

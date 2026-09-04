@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.*;
 /**
  * 秒杀接口
  *
- * 面试可讲：
+ * 设计说明：
  * - POST /seckill/execute — 核心秒杀接口，全链路漏斗过滤
  * - 必须登录（拦截器前置校验）
  * - 设备指纹从前端 Header 传入

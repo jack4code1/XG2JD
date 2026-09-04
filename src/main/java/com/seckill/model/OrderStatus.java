@@ -5,7 +5,7 @@ import java.util.Set;
 /**
  * 订单状态枚举 — 7状态 + 转移规则
  *
- * 面试可讲：
+ * 设计说明：
  * - 用枚举替代 Spring State Machine（太重）
  * - 每个状态自带 allowedTransitions，状态转移规则内聚
  * - 状态流转只依赖状态自身，不依赖外部配置

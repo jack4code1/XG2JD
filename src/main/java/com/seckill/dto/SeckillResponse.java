@@ -14,7 +14,7 @@ public class SeckillResponse {
     private boolean success;
     private String orderNo;
     private String message;
-    private int userWeight; // 用户本次分配的权重（面试展示用）
+    private int userWeight; // 用户本次分配的权重
 
     public static SeckillResponse ok(String orderNo, int weight) {
         return SeckillResponse.builder()

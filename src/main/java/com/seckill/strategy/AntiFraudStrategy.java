@@ -13,7 +13,7 @@ import java.time.Instant;
 /**
  * 防黄牛策略：设备指纹 + 滑动窗口频次检测
  *
- * 面试可讲：
+ * 设计说明：
  * - 设备指纹：Canvas Fingerprint → SHA256，不依赖 Cookie，清缓存也无法绕过
  * - 滑动窗口：Redis ZSET score=时间戳，ZREMRANGEBYSCORE + ZCARD，
  *   避免固定窗口的"边界双倍问题"

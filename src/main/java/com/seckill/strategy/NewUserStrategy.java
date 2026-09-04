@@ -11,7 +11,7 @@ import java.time.format.DateTimeFormatter;
 /**
  * 新用户权重策略：注册不足7天的用户权重 +50
  *
- * 面试可讲：
+ * 设计说明：
  * - 使用 Redis BitMap 存储用户画像，1亿用户仅需12.5MB
  * - 按天分片（user:new:2024-01-01），TTL 8天自动清理
  * - BitMap offset = userId % hashCode，避免用户ID不连续问题

@@ -10,7 +10,7 @@ import java.util.List;
 /**
  * 智能分配策略编排服务
  *
- * 面试可讲：
+ * 设计说明：
  * - Spring 自动注入所有 AllocationStrategy 实现类
  * - 按 priority 排序：防黄牛(0) → 新用户(1) → 沉睡用户(2) → 默认(MAX)
  * - 权重链累加：baseWeight(100) + newUserBonus(50) + dormantBonus(30) - scalperPenalty(∞)

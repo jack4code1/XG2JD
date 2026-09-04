@@ -19,7 +19,7 @@ import java.util.UUID;
 /**
  * 订单服务 — 状态机 + 乐观锁
  *
- * 面试可讲：
+ * 设计说明：
  * - 每次状态变更都校验 OrderStatus.canTransitionTo()
  * - 乐观锁 UPDATE ... WHERE version=?，并发冲突→重试
  * - 退款/取消 → 同时执行 Lua 原子回滚库存
