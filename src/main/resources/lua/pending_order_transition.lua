@@ -2,7 +2,7 @@
 -- KEYS[1]: seckill:pending:order:{orderNo}
 -- KEYS[2]: seckill:pending:orders
 -- KEYS[3]: seckill:pending:{couponId}
--- ARGV[1]: action (CONFIRM_PUBLISHED / ACK / CLAIM_RECOVERY / RETRY_LATER / DEFER_PUBLISHED)
+-- ARGV[1]: action (CONFIRM_PUBLISHED / RETURNED / ACK / CLAIM_RECOVERY / RETRY_LATER / DEFER_PUBLISHED)
 -- ARGV[2]: orderNo
 -- ARGV[3]: nowMillis
 -- ARGV[4]: nextDueMillis
@@ -35,9 +35,28 @@ if state == false or state == 'FAILED' then
 end
 
 if action == 'CONFIRM_PUBLISHED' then
+    if state ~= 'PUBLISHING' and state ~= 'RECOVERING' then
+        return 0
+    end
     redis.call('HSET', pendingKey, 'state', 'PUBLISHED', 'published_at', tostring(now))
     redis.call('ZADD', pendingIndex, nextDue, orderNo)
     return 1
+end
+
+if action == 'RETURNED' then
+    if state ~= 'PUBLISHING' and state ~= 'RECOVERING' then
+        return 0
+    end
+    local retryCount = tonumber(redis.call('HGET', pendingKey, 'retry_count') or '0') + 1
+    redis.call('HSET', pendingKey, 'retry_count', tostring(retryCount))
+    if retryCount >= maxRetries then
+        redis.call('HSET', pendingKey, 'state', 'FAILED')
+        redis.call('ZREM', pendingIndex, orderNo)
+        return -retryCount
+    end
+    redis.call('HSET', pendingKey, 'state', 'RETRY_WAIT')
+    redis.call('ZADD', pendingIndex, nextDue, orderNo)
+    return retryCount
 end
 
 if action == 'CLAIM_RECOVERY' then

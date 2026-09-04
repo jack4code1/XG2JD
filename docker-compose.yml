@@ -3,7 +3,7 @@ services:
     image: ${IMAGE_REGISTRY:-docker.m.daocloud.io}/library/mysql:8.0
     container_name: seckill-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD_is_required}
       MYSQL_DATABASE: seckill
     ports:
       - "3306:3306"
@@ -35,7 +35,7 @@ services:
     container_name: seckill-rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: admin
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-admin123}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD_is_required}
     ports:
       - "5672:5672"   # AMQP
       - "15672:15672" # Management UI
@@ -55,13 +55,13 @@ services:
     environment:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/seckill?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
       MYSQL_USER: root
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD_is_required}
       REDIS_HOST: redis
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: admin
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-admin123}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-your-deepseek-api-key}
-      JWT_SECRET: ${JWT_SECRET:-seckill-coupon-jwt-secret-key-32bytes}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD_is_required}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?DEEPSEEK_API_KEY_is_required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET_is_required}
     ports:
       - "8080:8080"
     depends_on:
@@ -83,6 +83,8 @@ services:
     environment:
       CANAL_IP: canal-server
       CANAL_PORT: 11111
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD_is_required}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD_is_required}
     ports:
       - "11111:11111"
     volumes:
@@ -105,7 +107,7 @@ services:
       - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD_is_required}
     volumes:
       - grafana-data:/var/lib/grafana
 

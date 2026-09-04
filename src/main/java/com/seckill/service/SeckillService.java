@@ -149,6 +149,10 @@ public class SeckillService {
                     RabbitMQConfig.ORDER_CREATE_EXCHANGE,
                     RabbitMQConfig.ORDER_CREATE_KEY,
                     message,
+                    outgoing -> {
+                        outgoing.getMessageProperties().setCorrelationId(orderNo);
+                        return outgoing;
+                    },
                     correlation
             );
             var confirm = correlation.getFuture().get(2, TimeUnit.SECONDS);

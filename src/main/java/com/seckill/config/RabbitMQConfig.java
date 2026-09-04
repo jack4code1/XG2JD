@@ -130,6 +130,9 @@ public class RabbitMQConfig {
     public RabbitTemplate rabbitTemplate(ConnectionFactory connectionFactory) {
         RabbitTemplate template = new RabbitTemplate(connectionFactory);
         template.setMessageConverter(new Jackson2JsonMessageConverter());
+        // An unroutable message must trigger the Return callback instead of
+        // receiving only a broker ACK and being mistaken for a delivery.
+        template.setMandatory(true);
         return template;
     }
 }

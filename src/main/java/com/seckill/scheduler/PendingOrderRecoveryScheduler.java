@@ -114,7 +114,10 @@ public class PendingOrderRecoveryScheduler {
         try {
             CorrelationData correlation = new CorrelationData(orderNo);
             rabbitTemplate.convertAndSend(RabbitMQConfig.ORDER_CREATE_EXCHANGE,
-                    RabbitMQConfig.ORDER_CREATE_KEY, message, correlation);
+                    RabbitMQConfig.ORDER_CREATE_KEY, message, outgoing -> {
+                        outgoing.getMessageProperties().setCorrelationId(orderNo);
+                        return outgoing;
+                    }, correlation);
             var confirm = correlation.getFuture().get(2, TimeUnit.SECONDS);
             if (confirm == null || !confirm.isAck()) {
                 throw new IllegalStateException("RabbitMQ 发布确认失败");

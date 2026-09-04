@@ -31,6 +31,9 @@ public class PendingOrderService {
     @Value("${seckill.pending-order.published-reconcile-ms:30000}")
     private long publishedReconcileMs;
 
+    @Value("${seckill.pending-order.max-retries:10}")
+    private int maxRetries;
+
     /**
      * A confirm received after the consumer committed is intentionally a no-op:
      * the Lua transition never recreates a pending hash removed by ACK.
@@ -38,6 +41,23 @@ public class PendingOrderService {
     public boolean markDeliveryConfirmed(String orderNo, Long couponId) {
         long now = System.currentTimeMillis();
         return transition("CONFIRM_PUBLISHED", orderNo, couponId, now, now + publishedReconcileMs, 0) == 1;
+    }
+
+    /**
+     * A broker return means no queue accepted the message. Keep the Redis
+     * acceptance record and schedule the existing recovery worker to retry.
+     */
+    public boolean markDeliveryReturned(String orderNo) {
+        Object couponIdValue = stringRedisTemplate.opsForHash()
+                .get(SeckillRedisKeys.pendingOrder(orderNo), "coupon_id");
+        if (couponIdValue == null) return false;
+        try {
+            long now = System.currentTimeMillis();
+            return transition("RETURNED", orderNo, Long.parseLong(couponIdValue.toString()),
+                    now, now + 1000, maxRetries) > 0;
+        } catch (NumberFormatException ignored) {
+            return false;
+        }
     }
 
     public void acknowledgeAfterCommit(String orderNo, Long couponId) {
